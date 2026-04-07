@@ -4,7 +4,7 @@ import { generateText, tool } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
+import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
 
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -148,12 +148,18 @@ RULES:
              return { success: false, reason: "Task not found" };
           }
         }),
+        listGitHubRepos: tool({
+          description: "List all GitHub repositories for the authenticated user.",
+          parameters: z.object({}),
+          execute: async () => {
+            return await listUserRepos();
+          }
+        }),
         searchGitHubRepos: tool({
-          description: "Search for GitHub repositories. Prioritizes SilverbackWeb.",
+          description: "Search for a specific GitHub repository by name or keyword.",
           parameters: z.object({ query: z.string() }),
           execute: async ({ query }) => {
-            const results = await searchUserRepos(query);
-            return results;
+            return await searchUserRepos(query);
           }
         }),
         getGitHubIssues: tool({

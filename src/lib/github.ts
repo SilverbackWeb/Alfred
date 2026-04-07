@@ -7,14 +7,39 @@ export const octokit = new Octokit({
 });
 
 /**
+ * Lists all repositories for the authenticated user.
+ */
+export async function listUserRepos() {
+  if (!GITHUB_TOKEN) return { error: "Missing GITHUB_TOKEN" };
+
+  try {
+    const { data } = await octokit.rest.repos.listForAuthenticatedUser({
+      sort: "updated",
+      direction: "desc",
+      per_page: 20
+    });
+    return data.map(repo => ({
+      name: repo.full_name,
+      description: repo.description,
+      url: repo.html_url,
+      stars: repo.stargazers_count,
+      private: repo.private
+    }));
+  } catch (error) {
+    console.error("GitHub List Repos Error:", error);
+    return { error: "Failed to list repositories" };
+  }
+}
+
+/**
  * Searches for repositories owned by the user or their organization.
  */
 export async function searchUserRepos(query: string) {
   if (!GITHUB_TOKEN) return { error: "Missing GITHUB_TOKEN" };
-  
+
   try {
     const { data } = await octokit.rest.search.repos({
-      q: `${query} user:SilverbackWeb`, // Prioritize SilverbackWeb
+      q: `${query} user:SilverbackWeb`,
       sort: "updated",
       order: "desc",
       per_page: 5
