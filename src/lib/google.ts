@@ -114,7 +114,6 @@ export async function getUpcomingEvents(days = 7) {
       start: e.start?.dateTime || e.start?.date || "",
       end: e.end?.dateTime || e.end?.date || "",
       description: e.description || "",
-      link: e.htmlLink || "",
     }));
   } catch (e: unknown) {
     return { error: e instanceof Error ? e.message : String(e) };
