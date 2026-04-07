@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Personal PA - Digital Brain",
-  description: "A lightweight AI assistant taking care of your tasks.",
+  title: "Alfred — Personal Assistant",
+  description: "Your AI-powered personal assistant. Stay sharp, stay organized.",
 };
 
 export default function RootLayout({
