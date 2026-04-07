@@ -4,6 +4,8 @@ import { generateText, tool } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
+
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 
@@ -30,6 +32,7 @@ RULES:
 - **ANTI-CLUTTER**: If a task sounds like a "maybe," a "someday," or a random idea, set isBacklog: true.
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
+- **GITHUB ASSISTANT**: You can search repositories, list issues, and check notifications for the user on GitHub (SilverbackWeb).
 - **CONCISE**: Keep your responses short and punchy.`,
       prompt: userText,
       maxSteps: 5,
@@ -143,6 +146,33 @@ RULES:
                return { success: true, updated: task.title };
              }
              return { success: false, reason: "Task not found" };
+          }
+        }),
+        searchGitHubRepos: tool({
+          description: "Search for GitHub repositories. Prioritizes SilverbackWeb.",
+          parameters: z.object({ query: z.string() }),
+          execute: async ({ query }) => {
+            const results = await searchUserRepos(query);
+            return results;
+          }
+        }),
+        getGitHubIssues: tool({
+          description: "Fetch open issues for a specific GitHub repository.",
+          parameters: z.object({ 
+            owner: z.string().describe("Owner of the repo (e.g., 'SilverbackWeb')"),
+            repo: z.string().describe("Name of the repo (e.g., 'Alfred')")
+          }),
+          execute: async ({ owner, repo }) => {
+            const issues = await getRepoIssues(owner, repo);
+            return issues;
+          }
+        }),
+        getGitHubActivity: tool({
+          description: "Check for recent GitHub notifications or mentions.",
+          parameters: z.object({}),
+          execute: async () => {
+            const notifs = await getGitHubNotifications();
+            return notifs;
           }
         })
       }
