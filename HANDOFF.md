@@ -54,8 +54,9 @@ Alfred/
 
 ### User
 - `id`, `telegramId` (unique), `name`
-- `lastDraftTo`, `lastDraftSubject`, `lastDraftBody` — stores last email draft for "send it" confirmation
-- `lastPipeline` — JSON string of last GHL pipeline results shown (for follow-up commands)
+- `lastDraftTo`, `lastDraftSubject`, `lastDraftBody` — stores last email draft for hard-coded "send it" fast path
+- `lastPipeline` — JSON string of last GHL pipeline results (legacy band-aid, superseded by conversation memory)
+- Relations: `tasks[]`, `ideas[]`, `messages[]`
 
 ### Task
 - `id`, `title`, `description`, `status`, `priority`, `category`
@@ -64,6 +65,11 @@ Alfred/
 - `category` values: `PERSONAL`, `BUSINESS`, `IDEA`
 - `dueDate`, `reminderAt`, `result` (Alfred's output when he executes a task)
 - Relations: `userId` → User
+
+### Message
+- `id`, `role` ("user" or "assistant"), `content`, `createdAt`, `userId`
+- Stores full conversation history per user
+- Last 20 messages are injected into every OpenAI call as context
 
 ### Idea
 - `id`, `title`, `description`, `notes`, `userId`
@@ -83,6 +89,9 @@ Alfred/
 
 ## Telegram Bot Capabilities
 
+### Conversation Memory
+Alfred stores every message exchange in the `Message` table and injects the last 20 messages into every OpenAI call. He remembers full conversation context — pipeline results, email drafts, contact names, anything discussed recently. No more goldfish memory.
+
 ### Task Management
 - Create tasks (auto-categorized: PERSONAL/BUSINESS/IDEA, priority LOW/MEDIUM/HIGH)
 - Move tasks to backlog/vault
@@ -100,7 +109,7 @@ Alfred/
 ### Gmail
 - `draftEmail` — creates Gmail draft AND shows full email preview in Telegram
 - `sendLastDraft` — sends the last drafted email (triggered by "send it")
-- **Hard-coded confirmation intercept** — words like "yes/send it/go ahead" bypass AI and directly call sendEmail using saved draft data
+- **Hard-coded confirmation intercept** — words like "yes/send it/go ahead" bypass AI and directly call sendEmail using saved draft data (fast path — more reliable than AI tool selection)
 - `searchEmails` — Gmail search syntax
 
 ### Google Calendar
@@ -139,30 +148,37 @@ Alfred/
 | Variable | Purpose |
 |----------|---------|
 | `DATABASE_URL` | Neon PostgreSQL connection string |
-| `TELEGRAM_TOKEN` | `8605062570:AAEX-...` |
+| `TELEGRAM_TOKEN` | Telegram bot token |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `GITHUB_TOKEN` | GitHub personal access token |
-| `SLACK_BOT_TOKEN` | `xoxb-5153026916566-...` (silverbackweb group workspace) |
-| `GOOGLE_CLIENT_ID` | Found in Google Cloud Console → APIs & Services → Credentials |
-| `GOOGLE_CLIENT_SECRET` | Found in Google Cloud Console → APIs & Services → Credentials |
+| `SLACK_BOT_TOKEN` | Slack bot token (silverbackweb group workspace) |
+| `GOOGLE_CLIENT_ID` | Google Cloud Console → APIs & Services → Credentials |
+| `GOOGLE_CLIENT_SECRET` | Google Cloud Console → APIs & Services → Credentials |
 | `GOOGLE_REDIRECT_URI` | `https://alfred-navy-xi.vercel.app/api/auth/google/callback` |
 | `GOOGLE_REFRESH_TOKEN` | Captured via OAuth flow — permanent token |
-| `GHL_API_KEY` | `pit-a3ba72c0-75c6-4ea4-846a-155b2df2c750` (Private Integration Token) |
-| `GHL_LOCATION_ID` | `B6f7xvBmMEv4AbDVHB6H` |
+| `GHL_API_KEY` | Private Integration Token (`pit-xxx` format) |
+| `GHL_LOCATION_ID` | GHL Location ID |
 
 All variables must be set in both `.env` (local) and Vercel dashboard (production).
 
 ---
 
-## Known Limitations & Current Workarounds
+## How Conversation Memory Works
 
-### Memory Problem (IN PROGRESS — next task)
-Alfred has **no conversation memory between messages**. Every Telegram message is a fresh context with no history. This causes:
-- "Send it" failing after a draft (partially fixed with hard-coded intercept + `lastDraft` DB fields)
-- "Move X to lost" failing after pipeline shown (partially fixed with `lastPipeline` DB field)
-- General context loss for anything said more than one message ago
+Every incoming Telegram message triggers:
 
-**These are band-aids. The real fix is being built next.**
+1. Upsert user record (create on first message)
+2. Load last 20 messages from `Message` table ordered by time
+3. Save incoming message to DB as `role: "user"`
+4. Hard-coded intercept check — if message matches confirmation pattern AND `lastDraftTo` is set, send email directly (bypasses AI, most reliable path)
+5. Call OpenAI `generateText` with full history as `messages` array (not just `prompt`)
+6. Alfred's reply saved to DB as `role: "assistant"`
+
+This means Alfred remembers what he said, what tools he called, what results he got — for the entire conversation history.
+
+---
+
+## Known Limitations
 
 ### GHL API Notes
 - Uses v2 API at `services.leadconnectorhq.com` (NOT the old `rest.gohighlevel.com/v1`)
@@ -170,38 +186,10 @@ Alfred has **no conversation memory between messages**. Every Telegram message i
 - API key format is `pit-xxx` (Private Integration Token)
 - SMS sending via GHL's conversation API (not direct Twilio)
 
----
-
-## What We Are Building Next: Conversation Memory
-
-**The fix:** Store every message exchange in the database and inject the last 20 messages into every OpenAI call as conversation history.
-
-### Implementation Plan
-
-**1. Add `Message` model to Prisma schema:**
-```prisma
-model Message {
-  id        String   @id @default(uuid())
-  role      String   // "user" or "assistant"
-  content   String
-  createdAt DateTime @default(now())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-```
-
-**2. In `src/app/api/telegram/route.ts`:**
-- Before calling OpenAI: load last 20 messages for this user from DB
-- Pass them as `messages` array to `generateText` (in addition to system prompt)
-- After getting Alfred's reply: save both the user message and Alfred's reply to DB
-
-**3. Result:** Alfred will remember everything said in the conversation — pipeline results, email drafts, contact names, context from several messages back. All the band-aid fixes (lastDraft, lastPipeline) become unnecessary but can stay as fast-path shortcuts.
-
-**4. Files to change:**
-- `prisma/schema.prisma` — add Message model
-- `src/app/api/telegram/route.ts` — load history, pass to AI, save after each exchange
-
-This is a clean ~50 line change that fundamentally transforms Alfred from a stateless bot into a real assistant.
+### Email "Send It" Flow
+- Hard-coded regex intercept catches confirmation phrases before they hit the AI
+- `lastDraftTo/Subject/Body` fields on User model are the source of truth for this fast path
+- Real conversation memory now also gives the AI context, so either path works
 
 ---
 
@@ -221,4 +209,10 @@ cd Alfred
 npm run dev
 # In separate terminal:
 node poll-telegram.js  # polls Telegram locally instead of webhook
+```
+
+### Database schema changes:
+```bash
+npx prisma db push   # push schema to Neon
+npx prisma generate  # regenerate Prisma client
 ```
