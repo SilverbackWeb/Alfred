@@ -14,6 +14,7 @@ model User {
   lastDraftTo      String?
   lastDraftSubject String?
   lastDraftBody    String?
+  lastPipeline     String?  // JSON array of last pipeline results shown
   tasks       Task[]
   ideas       Idea[]
   createdAt   DateTime @default(now())

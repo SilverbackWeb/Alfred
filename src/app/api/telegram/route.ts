@@ -113,12 +113,14 @@ export async function POST(req: Request) {
 
     const userText = message.text;
 
+    // Load user context for memory injection
+    const userRecord = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
+
     // Hard-coded confirmation detection — bypass AI entirely for send confirmations
     const confirmWords = /^(yes|send it|go ahead|do it|looks good|confirmed|send|yep|yup|ok send it|yes send it|send that|send the email)[\s!.]*$/i;
     if (confirmWords.test(userText.trim())) {
-      const user = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
-      if (user?.lastDraftTo && user?.lastDraftSubject && user?.lastDraftBody) {
-        const result = await sendEmail(user.lastDraftTo, user.lastDraftSubject, user.lastDraftBody);
+      if (userRecord?.lastDraftTo && userRecord?.lastDraftSubject && userRecord?.lastDraftBody) {
+        const result = await sendEmail(userRecord.lastDraftTo, userRecord.lastDraftSubject, userRecord.lastDraftBody);
         await prisma.user.update({
           where: { telegramId: chatId.toString() },
           data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
@@ -126,7 +128,7 @@ export async function POST(req: Request) {
         if ("error" in result) {
           await sendMessage(chatId, `❌ Failed to send: ${result.error}`);
         } else {
-          await sendMessage(chatId, `✅ Email sent to ${user.lastDraftTo}!`);
+          await sendMessage(chatId, `✅ Email sent to ${userRecord.lastDraftTo}!`);
         }
         return NextResponse.json({ ok: true });
       }
@@ -135,6 +137,7 @@ export async function POST(req: Request) {
     const { text: replyText } = await generateText({
       model: openai("gpt-4o-mini", { structuredOutputs: false }),
       system: `You are Alfred, the user's Power Personal Assistant — sharp, capable, and proactive.
+${userRecord?.lastPipeline ? `\nCONTEXT — Last pipeline shown to user:\n${userRecord.lastPipeline}\nUse these opportunity IDs when the user says "move X to lost/won" etc.` : ""}
 You have access to their Digital Brain (task database), GitHub, and Slack via tools.
 
 RULES:
@@ -549,7 +552,16 @@ RULES:
             pipelineId: z.string().optional().describe("Specific pipeline ID — omit to get all deals"),
           }),
           execute: async ({ pipelineId }) => {
-            return await getPipelineDeals(pipelineId);
+            const deals = await getPipelineDeals(pipelineId);
+            // Save pipeline results so Alfred can reference them in follow-up messages
+            if (Array.isArray(deals)) {
+              await prisma.user.upsert({
+                where: { telegramId: chatId.toString() },
+                update: { lastPipeline: JSON.stringify(deals) },
+                create: { telegramId: chatId.toString(), name: message.chat.first_name || "User", lastPipeline: JSON.stringify(deals) },
+              });
+            }
+            return deals;
           },
         }),
 
