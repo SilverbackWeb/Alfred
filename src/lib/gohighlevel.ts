@@ -1,9 +1,10 @@
-const GHL_BASE = "https://rest.gohighlevel.com/v1";
+const GHL_BASE = "https://services.leadconnectorhq.com";
 
 function ghlHeaders() {
   return {
     Authorization: `Bearer ${process.env.GHL_API_KEY}`,
     "Content-Type": "application/json",
+    "Version": "2021-07-28",
   };
 }
 
@@ -20,7 +21,7 @@ export async function searchContacts(query: string) {
   if (err) return err;
   try {
     const res = await fetch(
-      `${GHL_BASE}/contacts/search?locationId=${process.env.GHL_LOCATION_ID}&query=${encodeURIComponent(query)}`,
+      `${GHL_BASE}/contacts/?locationId=${process.env.GHL_LOCATION_ID}&query=${encodeURIComponent(query)}`,
       { headers: ghlHeaders() }
     );
     const data = await res.json();
@@ -87,8 +88,8 @@ export async function getPipelineDeals(pipelineId?: string) {
   if (err) return err;
   try {
     const params = new URLSearchParams({
-      locationId: process.env.GHL_LOCATION_ID!,
-      ...(pipelineId ? { pipelineId } : {}),
+      location_id: process.env.GHL_LOCATION_ID!,
+      ...(pipelineId ? { pipeline_id: pipelineId } : {}),
     });
     const res = await fetch(`${GHL_BASE}/opportunities/search?${params}`, { headers: ghlHeaders() });
     const data = await res.json();
@@ -119,7 +120,7 @@ export async function sendSMS(contactId: string, message: string) {
     const res = await fetch(`${GHL_BASE}/conversations/messages`, {
       method: "POST",
       headers: ghlHeaders(),
-      body: JSON.stringify({ type: "SMS", contactId, message }),
+      body: JSON.stringify({ type: "SMS", contactId, message, locationId: process.env.GHL_LOCATION_ID }),
     });
     const result = await res.json();
     return { success: true, messageId: result.messageId || result.id };
