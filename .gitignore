@@ -39,3 +39,19 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# Digital Brain Private Data
+/dev.db
+/dev.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+*.db
+*.db-journal
+*.log
+.nextjs_launcher.log
+.telegram_launcher.log
+INBOX/
+OUTBOX/
+
