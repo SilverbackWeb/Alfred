@@ -18,7 +18,8 @@ import {
   AlertCircle,
   X,
   Tag,
-  Layers
+  Layers,
+  History
 } from "lucide-react";
 import { deleteTaskAction, moveTaskToStatusAction, updateTaskAction } from "@/app/actions";
 
@@ -35,6 +36,7 @@ export type Task = {
 
 export default function DashboardClient({ initialTasks }: { initialTasks: Task[] }) {
   const [viewMode, setViewMode] = useState<"FOCUS" | "VAULT">("FOCUS");
+  const [showCompleted, setShowCompleted] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   const focusTasks = initialTasks
@@ -53,7 +55,7 @@ export default function DashboardClient({ initialTasks }: { initialTasks: Task[]
   const toDos = focusTasks.filter((t) => t.status === "TODO");
   const inProgress = focusTasks.filter((t) => t.status === "IN_PROGRESS");
   const agentTasks = focusTasks.filter((t) => t.status === "AGENT_WORKING");
-  const done = focusTasks.filter((t) => t.status === "DONE");
+  const completed = initialTasks.filter((t) => t.status === "DONE");
 
   const vaultTasks = initialTasks.filter(t => t.status === "BACKLOG");
   const personalBacklog = vaultTasks.filter(t => t.category === "PERSONAL");
@@ -82,9 +84,16 @@ export default function DashboardClient({ initialTasks }: { initialTasks: Task[]
           </button>
         </div>
 
-        <div className="text-right">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowCompleted(v => !v)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border transition-all duration-300 ${showCompleted ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-gray-900/40 text-gray-400 border-gray-800 hover:text-gray-200"}`}
+          >
+            <History className="w-4 h-4" />
+            Completed {completed.length > 0 && `(${completed.length})`}
+          </button>
           <p className="text-sm font-medium text-gray-400 border border-gray-800 bg-gray-900/40 px-4 py-2 rounded-full">
-            {viewMode === "FOCUS" ? `${focusTasks.length} Active Tasks` : `${vaultTasks.length} Archived Tasks`}
+            {viewMode === "FOCUS" ? `${toDos.length + inProgress.length + agentTasks.length} Active` : `${vaultTasks.length} in Vault`}
           </p>
         </div>
       </div>
@@ -119,8 +128,26 @@ export default function DashboardClient({ initialTasks }: { initialTasks: Task[]
         </div>
       )}
 
-      {viewMode === "FOCUS" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Completed overlay */}
+      {showCompleted && (
+        <div className="animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex items-center gap-3 mb-4">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            <h2 className="text-lg font-semibold text-gray-200">Completed</h2>
+            <span className="bg-gray-800 text-gray-400 text-xs px-2.5 py-1 rounded-full">{completed.length}</span>
+          </div>
+          {completed.length === 0 ? (
+            <p className="text-gray-500 text-sm px-1">Nothing completed yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {completed.map(task => <TaskCard key={task.id} task={task} onOpen={setSelectedTask} />)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!showCompleted && viewMode === "FOCUS" && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <Column title="To Do" icon={<Circle className="w-5 h-5 text-gray-400"/>} count={toDos.length}>
             {toDos.map(task => <TaskCard key={task.id} task={task} onOpen={setSelectedTask} />)}
           </Column>
@@ -132,22 +159,20 @@ export default function DashboardClient({ initialTasks }: { initialTasks: Task[]
           <Column title="Agent Tasks" icon={<Bot className="w-5 h-5 text-purple-400"/>} count={agentTasks.length}>
             {agentTasks.map(task => <TaskCard key={task.id} task={task} onOpen={setSelectedTask} />)}
           </Column>
-
-          <Column title="Done" icon={<CheckCircle2 className="w-5 h-5 text-emerald-400"/>} count={done.length}>
-            {done.map(task => <TaskCard key={task.id} task={task} onOpen={setSelectedTask} />)}
-          </Column>
         </div>
-      ) : (
+      )}
+
+      {!showCompleted && viewMode === "VAULT" && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <Column title="Personal Backlog" icon={<FolderArchive className="w-5 h-5 text-emerald-400"/>} count={personalBacklog.length}>
+          <Column title="Personal" icon={<FolderArchive className="w-5 h-5 text-emerald-400"/>} count={personalBacklog.length}>
             {personalBacklog.map(task => <TaskCard key={task.id} task={task} isVault onOpen={setSelectedTask} />)}
           </Column>
 
-          <Column title="Business Backlog" icon={<FolderArchive className="w-5 h-5 text-amber-400"/>} count={businessBacklog.length}>
+          <Column title="Business" icon={<FolderArchive className="w-5 h-5 text-amber-400"/>} count={businessBacklog.length}>
             {businessBacklog.map(task => <TaskCard key={task.id} task={task} isVault onOpen={setSelectedTask} />)}
           </Column>
 
-          <Column title="Business Ideas" icon={<Sparkles className="w-5 h-5 text-pink-400"/>} count={ideasBacklog.length}>
+          <Column title="Ideas" icon={<Sparkles className="w-5 h-5 text-pink-400"/>} count={ideasBacklog.length}>
             {ideasBacklog.map(task => <TaskCard key={task.id} task={task} isVault onOpen={setSelectedTask} />)}
           </Column>
         </div>
