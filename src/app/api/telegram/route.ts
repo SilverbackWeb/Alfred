@@ -5,7 +5,8 @@ import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
-import { extractText, getDocumentProxy } from "unpdf";
+import { sendSlackMessage, listSlackChannels } from "@/lib/slack";
+import { getDocumentProxy, extractText } from "unpdf";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 
@@ -22,20 +23,17 @@ async function handlePdf(message: any, chatId: number) {
   await sendMessage(chatId, "📄 Got your PDF. Extracting tasks...");
 
   try {
-    // Get file download path from Telegram
     const fileRes = await fetch(
       `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getFile?file_id=${message.document.file_id}`
     );
     const fileData = await fileRes.json();
     const filePath = fileData.result.file_path;
 
-    // Download the file
     const fileResponse = await fetch(
       `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`
     );
     const buffer = Buffer.from(await fileResponse.arrayBuffer());
 
-    // Extract text from PDF
     const pdf = await getDocumentProxy(new Uint8Array(buffer));
     const { text: rawText } = await extractText(pdf, { mergePages: true });
     const text = rawText.trim();
@@ -45,7 +43,6 @@ async function handlePdf(message: any, chatId: number) {
       return;
     }
 
-    // Use AI to pull out tasks
     const { text: aiResponse } = await generateText({
       model: openai("gpt-4o-mini"),
       system: `You extract tasks, ideas, and action items from documents.
@@ -55,7 +52,6 @@ Be thorough — capture everything actionable. Assign priorities intelligently.`
       prompt: `Extract all tasks and action items from this document:\n\n${text.slice(0, 8000)}`,
     });
 
-    // Parse JSON from AI response
     let tasks = [];
     try {
       const match = aiResponse.match(/\[[\s\S]*\]/);
@@ -70,14 +66,12 @@ Be thorough — capture everything actionable. Assign priorities intelligently.`
       return;
     }
 
-    // Get or create user
     const user = await prisma.user.upsert({
       where: { telegramId: chatId.toString() },
       update: {},
       create: { telegramId: chatId.toString(), name: message.chat.first_name || "User" },
     });
 
-    // Save all tasks to Vault (BACKLOG)
     await prisma.task.createMany({
       data: tasks.map((t: any) => ({
         title: t.title,
@@ -89,10 +83,7 @@ Be thorough — capture everything actionable. Assign priorities intelligently.`
       })),
     });
 
-    await sendMessage(
-      chatId,
-      `✅ Added ${tasks.length} tasks to your Vault from the PDF. Check your dashboard!`
-    );
+    await sendMessage(chatId, `✅ Added ${tasks.length} tasks to your Vault from the PDF. Check your dashboard!`);
   } catch (error) {
     console.error("PDF Error:", error);
     await sendMessage(chatId, "❌ Something went wrong processing the PDF. Try again.");
@@ -122,19 +113,19 @@ export async function POST(req: Request) {
 
     const { text: replyText } = await generateText({
       model: openai("gpt-4o-mini", { structuredOutputs: false }),
-      system: `You are the user's Power Personal Assistant. Your job is to stay organized and proactive.
-You have access to their Digital Brain (database) via tools.
-Use tools to create tasks, search the Vault, or update existing items.
+      system: `You are Alfred, the user's Power Personal Assistant — sharp, capable, and proactive.
+You have access to their Digital Brain (task database), GitHub, and Slack via tools.
 
 RULES:
 - **ANTI-CLUTTER**: If a task sounds like a "maybe," a "someday," or a random idea, set isBacklog: true.
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
-- **GITHUB ASSISTANT**: You can list/search repositories, list issues, and check notifications for the user on GitHub (SilverbackWeb).
-- **CONCISE**: Keep your responses short and punchy.`,
+- **DELEGATION**: When the user asks what you can take off their plate, use reviewTasksForDelegation, then executeAgentTask for confirmed items.
+- **CONCISE**: Keep your responses short and punchy. You're a butler, not a chatbot.`,
       prompt: userText,
-      maxSteps: 5,
+      maxSteps: 10,
       tools: {
+        // ── TASK TOOLS ────────────────────────────────────────────────────────
         createTask: tool({
           description: "Create a new task. Use isBacklog: true for ideas or low-priority items.",
           parameters: z.object({
@@ -170,8 +161,9 @@ RULES:
             return { success: true, taskId: task.id, status };
           },
         }),
+
         getVaultTasks: tool({
-          description: "List all tasks in the Vault (backlog/ideas). Use this when the user asks what's in their vault or backlog.",
+          description: "List all tasks in the Vault (backlog/ideas). Use when the user asks what's in their vault or backlog.",
           parameters: z.object({}),
           execute: async () => {
             const results = await prisma.task.findMany({
@@ -181,6 +173,7 @@ RULES:
             return results.map((t) => ({ id: t.id, title: t.title, category: t.category, priority: t.priority }));
           },
         }),
+
         searchVault: tool({
           description: "Search the Vault/Backlog for a specific keyword or topic.",
           parameters: z.object({ query: z.string() }),
@@ -198,6 +191,7 @@ RULES:
             return results.map((t) => ({ id: t.id, title: t.title, category: t.category }));
           },
         }),
+
         updateTask: tool({
           description: "Update an existing task's priority, due date, or status.",
           parameters: z.object({
@@ -208,7 +202,7 @@ RULES:
           }),
           execute: async ({ title, priority, dueDate, status }) => {
             const task = await prisma.task.findFirst({
-              where: { title: { contains: title }, user: { telegramId: chatId.toString() } },
+              where: { title: { contains: title, mode: "insensitive" }, user: { telegramId: chatId.toString() } },
             });
             if (!task) return { success: false, reason: "Task not found" };
 
@@ -223,6 +217,7 @@ RULES:
             return { success: true, updated: updated.title };
           },
         }),
+
         getPendingTasks: tool({
           description: "List the user's currently pending tasks (TODO or IN_PROGRESS).",
           parameters: z.object({}),
@@ -237,18 +232,20 @@ RULES:
             return tasks.map((t) => ({
               id: t.id,
               title: t.title,
+              description: t.description,
               priority: t.priority,
               status: t.status,
               dueDate: t.dueDate,
             }));
           },
         }),
+
         markTaskDone: tool({
           description: "Mark a task as completed/DONE.",
           parameters: z.object({ title: z.string() }),
           execute: async ({ title }) => {
             const task = await prisma.task.findFirst({
-              where: { title: { contains: title }, user: { telegramId: chatId.toString() } },
+              where: { title: { contains: title, mode: "insensitive" }, user: { telegramId: chatId.toString() } },
             });
             if (task) {
               await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
@@ -257,6 +254,104 @@ RULES:
             return { success: false, reason: "Task not found" };
           },
         }),
+
+        // ── AGENT DELEGATION TOOLS ────────────────────────────────────────────
+        reviewTasksForDelegation: tool({
+          description: "Analyze the user's TODO tasks and classify which ones Alfred can handle autonomously (draft, research, slack message) vs which need the human.",
+          parameters: z.object({}),
+          execute: async () => {
+            const tasks = await prisma.task.findMany({
+              where: {
+                status: { in: ["TODO", "IN_PROGRESS"] },
+                user: { telegramId: chatId.toString() },
+              },
+            });
+            // Return raw tasks — the AI will classify them in its response
+            return tasks.map((t) => ({
+              id: t.id,
+              title: t.title,
+              description: t.description,
+              category: t.category,
+              priority: t.priority,
+            }));
+          },
+        }),
+
+        executeAgentTask: tool({
+          description: "Execute a task autonomously. Move it to AGENT_WORKING, do the work, store the result, mark DONE.",
+          parameters: z.object({
+            taskId: z.string().describe("The task ID to execute"),
+            taskType: z.enum(["draft", "research", "slack"]),
+            slackChannel: z.string().optional().describe("Slack channel name (without #) — required for slack taskType"),
+          }),
+          execute: async ({ taskId, taskType, slackChannel }) => {
+            const task = await prisma.task.findUnique({ where: { id: taskId } });
+            if (!task) return { success: false, reason: "Task not found" };
+
+            // Mark as AGENT_WORKING immediately
+            await prisma.task.update({ where: { id: taskId }, data: { status: "AGENT_WORKING" } });
+
+            let result = "";
+
+            if (taskType === "draft") {
+              const { text } = await generateText({
+                model: openai("gpt-4o-mini"),
+                system: "You are a professional writer. Write clear, concise, professional content.",
+                prompt: `Write a complete draft for this task:\nTitle: ${task.title}\nDescription: ${task.description || "No additional details"}\n\nProduce the full draft content ready to use.`,
+              });
+              result = text;
+            }
+
+            else if (taskType === "research") {
+              const { text } = await generateText({
+                model: openai("gpt-4o-mini"),
+                system: "You are a sharp research analyst. Be concise, factual, and actionable.",
+                prompt: `Research and summarize this topic:\nTitle: ${task.title}\nContext: ${task.description || "No additional context"}\n\nProvide a clear, structured summary with key insights and recommended next steps.`,
+              });
+              result = text;
+            }
+
+            else if (taskType === "slack") {
+              const channel = slackChannel || "general";
+              const messageText = `📋 *${task.title}*\n${task.description || ""}`;
+              const slackResult = await sendSlackMessage(channel, messageText);
+              if ("error" in slackResult) {
+                await prisma.task.update({ where: { id: taskId }, data: { status: "TODO" } });
+                return { success: false, reason: slackResult.error };
+              }
+              result = `Slack message sent to #${channel}`;
+            }
+
+            // Store result and mark DONE
+            await prisma.task.update({
+              where: { id: taskId },
+              data: { status: "DONE", result },
+            });
+
+            return { success: true, taskTitle: task.title, taskType, resultPreview: result.slice(0, 200) };
+          },
+        }),
+
+        sendSlackMessage: tool({
+          description: "Send a Slack message to a channel on behalf of the user.",
+          parameters: z.object({
+            channel: z.string().describe("Channel name without # (e.g. 'general')"),
+            message: z.string().describe("The message to send"),
+          }),
+          execute: async ({ channel, message }) => {
+            return await sendSlackMessage(channel, message);
+          },
+        }),
+
+        listSlackChannels: tool({
+          description: "List available Slack channels the bot has access to.",
+          parameters: z.object({}),
+          execute: async () => {
+            return await listSlackChannels();
+          },
+        }),
+
+        // ── GITHUB TOOLS ─────────────────────────────────────────────────────
         listGitHubRepos: tool({
           description: "List all GitHub repositories for the authenticated user.",
           parameters: z.object({}),
@@ -264,6 +359,7 @@ RULES:
             return await listUserRepos();
           },
         }),
+
         searchGitHubRepos: tool({
           description: "Search for a specific GitHub repository by name or keyword.",
           parameters: z.object({ query: z.string() }),
@@ -271,6 +367,7 @@ RULES:
             return await searchUserRepos(query);
           },
         }),
+
         getGitHubIssues: tool({
           description: "Fetch open issues for a specific GitHub repository.",
           parameters: z.object({
@@ -281,6 +378,7 @@ RULES:
             return await getRepoIssues(owner, repo);
           },
         }),
+
         getGitHubActivity: tool({
           description: "Check for recent GitHub notifications or mentions.",
           parameters: z.object({}),

@@ -25,6 +25,7 @@ model Task {
   category     String   @default("PERSONAL") // PERSONAL, BUSINESS, IDEA
   dueDate      DateTime?
   reminderAt   DateTime?
+  result       String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   userId       String

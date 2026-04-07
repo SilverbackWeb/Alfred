@@ -31,6 +31,7 @@ export type Task = {
   priority: string;
   category: string;
   dueDate: Date | null;
+  result: string | null;
   createdAt: Date;
 };
 
@@ -67,29 +68,42 @@ export default function DashboardClient({ initialTasks }: { initialTasks: Task[]
   return (
     <div className="flex flex-col gap-8">
 
-      {/* View Mode Toggle */}
-      <div className="flex items-center w-full bg-gray-900/50 p-1.5 rounded-xl border border-gray-800 shadow-xl">
-        <button
-          onClick={() => { setViewMode("FOCUS"); setShowCompleted(false); }}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${!showCompleted && viewMode === "FOCUS" ? "bg-indigo-500/20 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
+      {/* View Mode Toggle + Ask Alfred */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center w-full bg-gray-900/50 p-1.5 rounded-xl border border-gray-800 shadow-xl">
+          <button
+            onClick={() => { setViewMode("FOCUS"); setShowCompleted(false); }}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${!showCompleted && viewMode === "FOCUS" ? "bg-indigo-500/20 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
+          >
+            <Zap className="w-4 h-4 shrink-0" />
+            <span>Focus</span>
+          </button>
+          <button
+            onClick={() => { setViewMode("VAULT"); setShowCompleted(false); }}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${!showCompleted && viewMode === "VAULT" ? "bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
+          >
+            <FolderArchive className="w-4 h-4 shrink-0" />
+            <span>The Vault</span>
+          </button>
+          <button
+            onClick={() => setShowCompleted(v => !v)}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${showCompleted ? "bg-gray-500/20 text-gray-300 shadow-inner" : "text-gray-400 hover:text-gray-200"}`}
+          >
+            <History className="w-4 h-4 shrink-0" />
+            <span>Completed</span>
+          </button>
+        </div>
+
+        {/* Ask Alfred button */}
+        <a
+          href="https://t.me/Alfred_AlphaBot"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-bold bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 text-indigo-300 hover:from-indigo-600/30 hover:to-purple-600/30 hover:text-indigo-200 transition-all duration-300 shadow-[0_0_20px_rgba(99,102,241,0.1)]"
         >
-          <Zap className="w-4 h-4 shrink-0" />
-          <span>Focus</span>
-        </button>
-        <button
-          onClick={() => { setViewMode("VAULT"); setShowCompleted(false); }}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${!showCompleted && viewMode === "VAULT" ? "bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
-        >
-          <FolderArchive className="w-4 h-4 shrink-0" />
-          <span>The Vault</span>
-        </button>
-        <button
-          onClick={() => setShowCompleted(v => !v)}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${showCompleted ? "bg-gray-500/20 text-gray-300 shadow-inner" : "text-gray-400 hover:text-gray-200"}`}
-        >
-          <History className="w-4 h-4 shrink-0" />
-          <span>Completed</span>
-        </button>
+          <Bot className="w-4 h-4" />
+          Ask Alfred — What can you take off my plate?
+        </a>
       </div>
 
       {viewMode === "FOCUS" && nextUp && (
@@ -218,6 +232,9 @@ function TaskCard({ task, isVault = false, onOpen }: { task: Task, isVault?: boo
       onClick={() => onOpen(task)}
       className={`glass-panel group p-4 rounded-xl transition-all relative hover:-translate-y-1 hover:shadow-xl cursor-pointer ${isAgent ? 'border-purple-500/40 shadow-[0_0_20px_rgba(168,85,247,0.15)] bg-purple-500/5' : ''}`}
     >
+      {isAgent && (
+        <span className="absolute -inset-px rounded-xl border-2 border-purple-500/50 animate-pulse pointer-events-none" />
+      )}
       <div className="flex items-start justify-between gap-2 mb-2">
         <h3 className="font-medium text-gray-100 leading-tight pr-8">{task.title}</h3>
 
@@ -361,6 +378,17 @@ function TaskDetailModal({ task, onClose }: { task: Task, onClose: () => void })
             {task.description || "No description provided."}
           </p>
         </div>
+
+        {/* Alfred's Output */}
+        {task.result && (
+          <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Bot className="w-4 h-4 text-purple-400" />
+              <p className="text-sm text-purple-400 font-semibold uppercase tracking-wider">Alfred&apos;s Output</p>
+            </div>
+            <p className="text-gray-300 leading-relaxed text-sm whitespace-pre-wrap">{task.result}</p>
+          </div>
+        )}
 
         {/* Meta grid */}
         <div className="grid grid-cols-2 gap-4">
