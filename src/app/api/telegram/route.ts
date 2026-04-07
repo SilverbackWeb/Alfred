@@ -125,6 +125,7 @@ RULES:
 - **DELEGATION**: When the user asks what you can take off their plate, use reviewTasksForDelegation, then executeAgentTask for confirmed items.
 - **GOOGLE WORKSPACE**: You can draft/send emails, search Gmail, check/create Calendar events, and create Google Docs.
 - **EMAIL SAFETY**: Always use draftEmail unless the user explicitly says "send". Never send without confirmation.
+- **SEND CONFIRMATION**: If the user says "yes send it", "go ahead", "send it", or similar after a draft — use sendLastDraft, NOT sendEmail. Never ask for the address again.
 - **GOHIGHLEVEL CRM**: You can search contacts, add new leads, update contacts, check the sales pipeline, and send SMS.
 - **CONCISE**: Keep your responses short and punchy. You're a butler, not a chatbot.`,
       prompt: userText,
@@ -394,19 +395,43 @@ RULES:
 
         // ── GOOGLE TOOLS ──────────────────────────────────────────────────────
         draftEmail: tool({
-          description: "Create a Gmail draft. Use when user says 'draft', 'write', or 'prepare' an email. Default to this over sendEmail.",
+          description: "Create a Gmail draft. Use when user says 'draft', 'write', or 'prepare' an email. Default to this over sendEmail. Always saves the draft details so user can say 'send it' afterward.",
           parameters: z.object({
             to: z.string().describe("Recipient email address"),
             subject: z.string(),
             body: z.string().describe("Plain text email body"),
           }),
           execute: async ({ to, subject, body }) => {
+            // Save draft details to user record so "send it" works later
+            await prisma.user.upsert({
+              where: { telegramId: chatId.toString() },
+              update: { lastDraftTo: to, lastDraftSubject: subject, lastDraftBody: body },
+              create: { telegramId: chatId.toString(), name: message.chat.first_name || "User", lastDraftTo: to, lastDraftSubject: subject, lastDraftBody: body },
+            });
             return await draftEmail(to, subject, body);
           },
         }),
 
+        sendLastDraft: tool({
+          description: "Send the last email Alfred drafted when user says 'send it', 'yes send it', 'go ahead and send', or similar confirmations referring to a previous draft.",
+          parameters: z.object({}),
+          execute: async () => {
+            const user = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
+            if (!user?.lastDraftTo || !user?.lastDraftSubject || !user?.lastDraftBody) {
+              return { error: "No draft found. Please ask me to draft an email first." };
+            }
+            const result = await sendEmail(user.lastDraftTo, user.lastDraftSubject, user.lastDraftBody);
+            // Clear the draft after sending
+            await prisma.user.update({
+              where: { telegramId: chatId.toString() },
+              data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
+            });
+            return result;
+          },
+        }),
+
         sendEmail: tool({
-          description: "Send an email immediately via Gmail. Only use when user explicitly says 'send' — default to draftEmail.",
+          description: "Send a brand new email immediately via Gmail. Only use when user provides a specific recipient, subject, and body — not when confirming a previous draft (use sendLastDraft for that).",
           parameters: z.object({
             to: z.string().describe("Recipient email address"),
             subject: z.string(),

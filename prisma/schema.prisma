@@ -8,12 +8,15 @@ datasource db {
 }
 
 model User {
-  id         String   @id @default(uuid())
-  telegramId String?  @unique
-  name       String?
-  tasks      Task[]
-  ideas      Idea[]
-  createdAt  DateTime @default(now())
+  id          String   @id @default(uuid())
+  telegramId  String?  @unique
+  name        String?
+  lastDraftTo      String?
+  lastDraftSubject String?
+  lastDraftBody    String?
+  tasks       Task[]
+  ideas       Idea[]
+  createdAt   DateTime @default(now())
 }
 
 model Task {
