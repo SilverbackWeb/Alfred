@@ -170,19 +170,30 @@ RULES:
             return { success: true, taskId: task.id, status };
           },
         }),
+        getVaultTasks: tool({
+          description: "List all tasks in the Vault (backlog/ideas). Use this when the user asks what's in their vault or backlog.",
+          parameters: z.object({}),
+          execute: async () => {
+            const results = await prisma.task.findMany({
+              where: { status: "BACKLOG" },
+              orderBy: [{ category: "asc" }, { priority: "asc" }],
+            });
+            return results.map((t) => ({ id: t.id, title: t.title, category: t.category, priority: t.priority }));
+          },
+        }),
         searchVault: tool({
-          description: "Search the Vault/Backlog for specific keywords or topics.",
+          description: "Search the Vault/Backlog for a specific keyword or topic.",
           parameters: z.object({ query: z.string() }),
           execute: async ({ query }) => {
             const results = await prisma.task.findMany({
               where: {
                 status: "BACKLOG",
                 OR: [
-                  { title: { contains: query } },
-                  { description: { contains: query } },
+                  { title: { contains: query, mode: "insensitive" } },
+                  { description: { contains: query, mode: "insensitive" } },
                 ],
               },
-              take: 5,
+              take: 10,
             });
             return results.map((t) => ({ id: t.id, title: t.title, category: t.category }));
           },
