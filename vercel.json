@@ -1,0 +1,11 @@
+{
+  "build": {
+    "env": {
+      "DATABASE_URL": "sqlite://./prisma/dev.db"
+    },
+    "commands": {
+      "build": "npm run build",
+      "postbuild": "npx prisma generate"
+    }
+  }
+}
