@@ -17,6 +17,7 @@ model User {
   lastPipeline     String?  // JSON array of last pipeline results shown
   tasks       Task[]
   ideas       Idea[]
+  messages    Message[]
   createdAt   DateTime @default(now())
 }
 
@@ -34,6 +35,15 @@ model Task {
   updatedAt    DateTime @updatedAt
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  role      String   // "user" or "assistant"
+  content   String
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Idea {

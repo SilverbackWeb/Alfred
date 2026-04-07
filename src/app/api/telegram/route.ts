@@ -113,8 +113,27 @@ export async function POST(req: Request) {
 
     const userText = message.text;
 
-    // Load user context for memory injection
-    const userRecord = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
+    // Load user record + last 20 messages for conversation history
+    const userRecord = await prisma.user.upsert({
+      where: { telegramId: chatId.toString() },
+      update: {},
+      create: { telegramId: chatId.toString(), name: message.chat.first_name || "User" },
+    });
+
+    const history = await prisma.message.findMany({
+      where: { userId: userRecord.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    const historyMessages = history.reverse().map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }));
+
+    // Save incoming user message
+    await prisma.message.create({
+      data: { role: "user", content: userText, userId: userRecord.id },
+    });
 
     // Hard-coded confirmation detection — bypass AI entirely for send confirmations
     const confirmWords = /^(yes|send it|go ahead|do it|looks good|confirmed|send|yep|yup|ok send it|yes send it|send that|send the email)[\s!.]*$/i;
@@ -125,11 +144,11 @@ export async function POST(req: Request) {
           where: { telegramId: chatId.toString() },
           data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
         });
-        if ("error" in result) {
-          await sendMessage(chatId, `❌ Failed to send: ${result.error}`);
-        } else {
-          await sendMessage(chatId, `✅ Email sent to ${userRecord.lastDraftTo}!`);
-        }
+        const reply = "error" in result
+          ? `❌ Failed to send: ${result.error}`
+          : `✅ Email sent to ${userRecord.lastDraftTo}!`;
+        await sendMessage(chatId, reply);
+        await prisma.message.create({ data: { role: "assistant", content: reply, userId: userRecord.id } });
         return NextResponse.json({ ok: true });
       }
     }
@@ -137,17 +156,17 @@ export async function POST(req: Request) {
     const { text: replyText } = await generateText({
       model: openai("gpt-4o-mini", { structuredOutputs: false }),
       system: `You are Alfred, the user's Power Personal Assistant — sharp, capable, and proactive.
-${userRecord?.lastPipeline ? `\nCONTEXT — Last pipeline shown to user:\n${userRecord.lastPipeline}\nUse these opportunity IDs when the user says "move X to lost/won" etc.` : ""}
-You have access to their Digital Brain (task database), GitHub, and Slack via tools.
+You have access to their Digital Brain (task database), GitHub, Slack, Gmail, Google Calendar, Google Docs, and GoHighLevel CRM via tools.
 
 RULES:
+- **MEMORY**: You have full conversation history. Use it. Never say you don't know what was just discussed.
 - **ANTI-CLUTTER**: If a task sounds like a "maybe," a "someday," or a random idea, set isBacklog: true.
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
 - **DELEGATION**: When the user asks what you can take off their plate, use reviewTasksForDelegation, then executeAgentTask for confirmed items.
 - **GOOGLE WORKSPACE**: You can draft/send emails, search Gmail, check/create Calendar events, and create Google Docs.
 - **ALL EMAILS go through draftEmail first** — whether the user says "send", "draft", "write", or "email someone". Always preview before sending. Never skip the draft step.
-- **SEND CONFIRMATION**: "send it", "yes", "go ahead", "looks good", "do it" = ALWAYS call sendLastDraft tool. No exceptions. Do not reply with text first.
+- **SEND CONFIRMATION**: If user confirms sending after a draft — call sendLastDraft immediately.
 - **DRAFT DISPLAY**: When draftEmail returns, show the full email in your reply like this:
   ✉️ Draft ready — reply "send it" to send or tell me what to change.
 
@@ -155,9 +174,12 @@ RULES:
   Subject: [subject]
 
   [body]
-- **GOHIGHLEVEL CRM**: You can search contacts, add new leads, update contacts, check the sales pipeline, and send SMS.
+- **GOHIGHLEVEL CRM**: You can search contacts, add new leads, update contacts, check the sales pipeline, update opportunities, and send SMS.
 - **CONCISE**: Keep your responses short and punchy. You're a butler, not a chatbot.`,
-      prompt: userText,
+      messages: [
+        ...historyMessages,
+        { role: "user" as const, content: userText },
+      ],
       maxSteps: 10,
       tools: {
         // ── TASK TOOLS ────────────────────────────────────────────────────────
@@ -593,6 +615,10 @@ RULES:
 
     if (replyText) {
       await sendMessage(chatId, replyText);
+      // Save Alfred's reply to conversation history
+      await prisma.message.create({
+        data: { role: "assistant", content: replyText, userId: userRecord.id },
+      });
     }
 
     return NextResponse.json({ ok: true });
