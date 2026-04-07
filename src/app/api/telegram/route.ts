@@ -94,6 +94,12 @@ Be thorough — capture everything actionable. Assign priorities intelligently.`
 
 export async function POST(req: Request) {
   try {
+    // Verify request is from Telegram using the webhook secret token
+    const incomingSecret = req.headers.get("x-telegram-bot-api-secret-token");
+    if (!incomingSecret || incomingSecret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
     const body = await req.json();
     const message = body.message;
     if (!message) return NextResponse.json({ ok: true });
