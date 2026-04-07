@@ -15,6 +15,7 @@ model User {
   lastDraftSubject String?
   lastDraftBody    String?
   lastPipeline     String?  // JSON array of last pipeline results shown
+  preferences      String?  // JSON array of learned user preferences
   tasks       Task[]
   ideas       Idea[]
   messages    Message[]

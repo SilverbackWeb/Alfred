@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { generateText, tool } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
+import fs from "fs";
+import path from "path";
 import { prisma } from "@/lib/prisma";
 import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
 import { sendSlackMessage, listSlackChannels } from "@/lib/slack";
@@ -11,6 +13,15 @@ import { searchContacts, createContact, updateContact, getPipelineDeals, updateO
 import { getDocumentProxy, extractText } from "unpdf";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+
+// Load Alfred's personality from the persona file at startup
+const ALFRED_PERSONA = (() => {
+  try {
+    return fs.readFileSync(path.join(process.cwd(), "ALFRED_PERSONA.md"), "utf-8");
+  } catch {
+    return "You are Alfred, a sharp personal assistant. Be concise and direct.";
+  }
+})();
 
 async function sendMessage(chatId: number, text: string) {
   if (!TELEGRAM_TOKEN) return;
@@ -159,29 +170,35 @@ export async function POST(req: Request) {
       }
     }
 
-    const { text: replyText } = await generateText({
-      model: openai("gpt-4o-mini", { structuredOutputs: false }),
-      system: `You are Alfred, the user's Power Personal Assistant — sharp, capable, and proactive.
-You have access to their Digital Brain (task database), GitHub, Slack, Gmail, Google Calendar, Google Docs, and GoHighLevel CRM via tools.
+    // Build system prompt: base persona + learned preferences
+    const prefs: string[] = userRecord.preferences ? JSON.parse(userRecord.preferences) : [];
+    const prefsBlock = prefs.length > 0
+      ? `\n\n## User Preferences (learned — follow these strictly)\n${prefs.map((p) => `- ${p}`).join("\n")}`
+      : "";
 
-RULES:
-- **MEMORY**: You have full conversation history. Use it. Never say you don't know what was just discussed.
-- **ANTI-CLUTTER**: If a task sounds like a "maybe," a "someday," or a random idea, set isBacklog: true.
+    const systemPrompt = `${ALFRED_PERSONA}${prefsBlock}
+
+---
+
+## Capabilities
+You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, GoHighLevel CRM, GitHub, Slack.
+
+## Capability Rules
+- **MEMORY**: Full conversation history is injected with every message. Use it. Never say you don't know what was just discussed.
+- **ANTI-CLUTTER**: If a task sounds like a "maybe" or "someday", set isBacklog: true.
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
-- **DELEGATION**: When the user asks what you can take off their plate, use reviewTasksForDelegation, then executeAgentTask for confirmed items.
-- **GOOGLE WORKSPACE**: You can draft/send emails, search Gmail, check/create Calendar events, and create Google Docs.
-- **ALL EMAILS go through draftEmail first** — whether the user says "send", "draft", "write", or "email someone". Always preview before sending. Never skip the draft step.
-- **SEND CONFIRMATION**: If user confirms sending after a draft — call sendLastDraft immediately.
-- **DRAFT DISPLAY**: When draftEmail returns, show the full email in your reply like this:
+- **DELEGATION**: When asked what you can take off their plate, use reviewTasksForDelegation then executeAgentTask.
+- **ALL EMAILS go through draftEmail first** — always preview before sending. Never skip the draft step.
+- **DRAFT DISPLAY**: When draftEmail returns, show the full email:
   ✉️ Draft ready — reply "send it" to send or tell me what to change.
-
-  To: [to]
-  Subject: [subject]
-
+  To: [to] / Subject: [subject]
   [body]
-- **GOHIGHLEVEL CRM**: You can search contacts, add new leads, update contacts, check the sales pipeline, update opportunities, and send SMS.
-- **CONCISE**: Keep your responses short and punchy. You're a butler, not a chatbot.`,
+- **SEND CONFIRMATION**: If user confirms after a draft, call sendLastDraft immediately.`;
+
+    const { text: replyText } = await generateText({
+      model: openai("gpt-4o-mini", { structuredOutputs: false }),
+      system: systemPrompt,
       messages: [
         ...historyMessages,
         { role: "user" as const, content: userText },
@@ -614,6 +631,49 @@ RULES:
           }),
           execute: async ({ contactId, message }) => {
             return await sendSMS(contactId, message);
+          },
+        }),
+
+        // ── MEMORY / PREFERENCE TOOLS ─────────────────────────────────────────
+        rememberPreference: tool({
+          description: "Save a user preference or personal fact that Alfred should always remember. Use when the user says 'remember', 'always', 'never', 'I prefer', 'from now on', etc.",
+          parameters: z.object({
+            preference: z.string().describe("The preference to remember, written as a clear instruction. e.g. 'Always give calendar answers as a single event, not a list'"),
+          }),
+          execute: async ({ preference }) => {
+            const prefs: string[] = userRecord.preferences ? JSON.parse(userRecord.preferences) : [];
+            prefs.push(preference);
+            await prisma.user.update({
+              where: { id: userRecord.id },
+              data: { preferences: JSON.stringify(prefs) },
+            });
+            return { saved: true, preference, totalPreferences: prefs.length };
+          },
+        }),
+
+        forgetPreference: tool({
+          description: "Remove a previously saved user preference. Use when the user says 'forget that', 'stop doing X', 'ignore that rule'.",
+          parameters: z.object({
+            keyword: z.string().describe("A keyword to match against stored preferences to find and remove the right one"),
+          }),
+          execute: async ({ keyword }) => {
+            const prefs: string[] = userRecord.preferences ? JSON.parse(userRecord.preferences) : [];
+            const before = prefs.length;
+            const updated = prefs.filter((p) => !p.toLowerCase().includes(keyword.toLowerCase()));
+            await prisma.user.update({
+              where: { id: userRecord.id },
+              data: { preferences: JSON.stringify(updated) },
+            });
+            return { removed: before - updated.length, remaining: updated.length };
+          },
+        }),
+
+        listPreferences: tool({
+          description: "Show all saved user preferences. Use when the user asks 'what do you remember about me?' or 'what are my preferences?'",
+          parameters: z.object({}),
+          execute: async () => {
+            const prefs: string[] = userRecord.preferences ? JSON.parse(userRecord.preferences) : [];
+            return prefs.length > 0 ? { preferences: prefs } : { preferences: [], note: "Nothing saved yet." };
           },
         }),
       },
