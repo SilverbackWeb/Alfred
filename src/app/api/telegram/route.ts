@@ -113,6 +113,25 @@ export async function POST(req: Request) {
 
     const userText = message.text;
 
+    // Hard-coded confirmation detection — bypass AI entirely for send confirmations
+    const confirmWords = /^(yes|send it|go ahead|do it|looks good|confirmed|send|yep|yup|ok send it|yes send it|send that|send the email)[\s!.]*$/i;
+    if (confirmWords.test(userText.trim())) {
+      const user = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
+      if (user?.lastDraftTo && user?.lastDraftSubject && user?.lastDraftBody) {
+        const result = await sendEmail(user.lastDraftTo, user.lastDraftSubject, user.lastDraftBody);
+        await prisma.user.update({
+          where: { telegramId: chatId.toString() },
+          data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
+        });
+        if ("error" in result) {
+          await sendMessage(chatId, `❌ Failed to send: ${result.error}`);
+        } else {
+          await sendMessage(chatId, `✅ Email sent to ${user.lastDraftTo}!`);
+        }
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     const { text: replyText } = await generateText({
       model: openai("gpt-4o-mini", { structuredOutputs: false }),
       system: `You are Alfred, the user's Power Personal Assistant — sharp, capable, and proactive.
