@@ -126,6 +126,13 @@ RULES:
 - **GOOGLE WORKSPACE**: You can draft/send emails, search Gmail, check/create Calendar events, and create Google Docs.
 - **EMAIL SAFETY**: Always use draftEmail unless the user explicitly says "send". Never send without confirmation.
 - **SEND CONFIRMATION**: If the user says "yes send it", "go ahead", "send it", or similar after a draft — use sendLastDraft, NOT sendEmail. Never ask for the address again.
+- **DRAFT DISPLAY**: When draftEmail returns, show the full email in your reply formatted like this:
+  ✉️ Draft ready — reply "send it" to send or "edit it" to change something.
+
+  To: [to]
+  Subject: [subject]
+
+  [body]
 - **GOHIGHLEVEL CRM**: You can search contacts, add new leads, update contacts, check the sales pipeline, and send SMS.
 - **CONCISE**: Keep your responses short and punchy. You're a butler, not a chatbot.`,
       prompt: userText,
@@ -408,7 +415,9 @@ RULES:
               update: { lastDraftTo: to, lastDraftSubject: subject, lastDraftBody: body },
               create: { telegramId: chatId.toString(), name: message.chat.first_name || "User", lastDraftTo: to, lastDraftSubject: subject, lastDraftBody: body },
             });
-            return await draftEmail(to, subject, body);
+            await draftEmail(to, subject, body);
+            // Return the full draft for display in Telegram — no link needed
+            return { to, subject, body, preview: true };
           },
         }),
 
