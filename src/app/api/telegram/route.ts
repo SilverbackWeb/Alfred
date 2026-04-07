@@ -5,8 +5,7 @@ import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse");
+import { extractText, getDocumentProxy } from "unpdf";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 
@@ -37,8 +36,9 @@ async function handlePdf(message: any, chatId: number) {
     const buffer = Buffer.from(await fileResponse.arrayBuffer());
 
     // Extract text from PDF
-    const pdfData = await pdfParse(buffer);
-    const text = pdfData.text.trim();
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const { text: rawText } = await extractText(pdf, { mergePages: true });
+    const text = rawText.trim();
 
     if (!text) {
       await sendMessage(chatId, "❌ Couldn't extract text from that PDF. Is it a scanned image?");
