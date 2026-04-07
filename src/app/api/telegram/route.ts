@@ -124,10 +124,10 @@ RULES:
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
 - **DELEGATION**: When the user asks what you can take off their plate, use reviewTasksForDelegation, then executeAgentTask for confirmed items.
 - **GOOGLE WORKSPACE**: You can draft/send emails, search Gmail, check/create Calendar events, and create Google Docs.
-- **EMAIL SAFETY**: Always use draftEmail unless the user explicitly says "send". Never send without confirmation.
-- **SEND CONFIRMATION**: If the user says "yes send it", "go ahead", "send it", or similar after a draft — use sendLastDraft, NOT sendEmail. Never ask for the address again.
-- **DRAFT DISPLAY**: When draftEmail returns, show the full email in your reply formatted like this:
-  ✉️ Draft ready — reply "send it" to send or "edit it" to change something.
+- **ALL EMAILS go through draftEmail first** — whether the user says "send", "draft", "write", or "email someone". Always preview before sending. Never skip the draft step.
+- **SEND CONFIRMATION**: If the user says "yes", "send it", "go ahead", "looks good", or any confirmation — use sendLastDraft immediately. Never ask for details again.
+- **DRAFT DISPLAY**: When draftEmail returns, show the full email in your reply like this:
+  ✉️ Draft ready — reply "send it" to send or tell me what to change.
 
   To: [to]
   Subject: [subject]
@@ -402,7 +402,7 @@ RULES:
 
         // ── GOOGLE TOOLS ──────────────────────────────────────────────────────
         draftEmail: tool({
-          description: "Create a Gmail draft. Use when user says 'draft', 'write', or 'prepare' an email. Default to this over sendEmail. Always saves the draft details so user can say 'send it' afterward.",
+          description: "Write and preview an email — use this for ALL email requests whether user says 'draft', 'write', 'send', or 'email someone'. Always show the preview first. Never send without confirmation.",
           parameters: z.object({
             to: z.string().describe("Recipient email address"),
             subject: z.string(),
@@ -439,17 +439,6 @@ RULES:
           },
         }),
 
-        sendEmail: tool({
-          description: "Send a brand new email immediately via Gmail. Only use when user provides a specific recipient, subject, and body — not when confirming a previous draft (use sendLastDraft for that).",
-          parameters: z.object({
-            to: z.string().describe("Recipient email address"),
-            subject: z.string(),
-            body: z.string().describe("Plain text email body"),
-          }),
-          execute: async ({ to, subject, body }) => {
-            return await sendEmail(to, subject, body);
-          },
-        }),
 
         searchEmails: tool({
           description: "Search Gmail inbox using Gmail search syntax (from:, subject:, is:unread, etc.).",
