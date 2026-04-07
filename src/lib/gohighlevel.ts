@@ -56,6 +56,7 @@ export async function createContact(data: {
       body: JSON.stringify({ ...data, locationId: process.env.GHL_LOCATION_ID }),
     });
     const result = await res.json();
+    if (!res.ok) return { error: `GHL API error ${res.status}: ${JSON.stringify(result)}` };
     return { success: true, contactId: result.contact?.id, name: `${data.firstName} ${data.lastName || ""}`.trim() };
   } catch (e: unknown) {
     return { error: e instanceof Error ? e.message : String(e) };
@@ -75,6 +76,7 @@ export async function updateContact(contactId: string, data: {
       body: JSON.stringify(data),
     });
     const result = await res.json();
+    if (!res.ok) return { error: `GHL API error ${res.status}: ${JSON.stringify(result)}` };
     return { success: true, contact: result.contact };
   } catch (e: unknown) {
     return { error: e instanceof Error ? e.message : String(e) };
@@ -126,7 +128,13 @@ export async function updateOpportunity(opportunityId: string, data: {
       body: JSON.stringify(data),
     });
     const result = await res.json();
-    return { success: true, id: result.opportunity?.id, status: result.opportunity?.status, name: result.opportunity?.name };
+    if (!res.ok) {
+      return { error: `GHL API error ${res.status}: ${JSON.stringify(result)}` };
+    }
+    if (!result.opportunity?.id) {
+      return { error: `Update may have failed — no opportunity returned. Response: ${JSON.stringify(result)}` };
+    }
+    return { success: true, id: result.opportunity.id, status: result.opportunity.status, name: result.opportunity.name };
   } catch (e: unknown) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
