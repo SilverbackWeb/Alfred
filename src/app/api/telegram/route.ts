@@ -6,6 +6,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
 import { sendSlackMessage, listSlackChannels } from "@/lib/slack";
+import { draftEmail, sendEmail, searchEmails, getUpcomingEvents, createCalendarEvent, createGoogleDoc } from "@/lib/google";
+import { searchContacts, createContact, updateContact, getPipelineDeals, sendSMS } from "@/lib/gohighlevel";
 import { getDocumentProxy, extractText } from "unpdf";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -121,6 +123,9 @@ RULES:
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
 - **DELEGATION**: When the user asks what you can take off their plate, use reviewTasksForDelegation, then executeAgentTask for confirmed items.
+- **GOOGLE WORKSPACE**: You can draft/send emails, search Gmail, check/create Calendar events, and create Google Docs.
+- **EMAIL SAFETY**: Always use draftEmail unless the user explicitly says "send". Never send without confirmation.
+- **GOHIGHLEVEL CRM**: You can search contacts, add new leads, update contacts, check the sales pipeline, and send SMS.
 - **CONCISE**: Keep your responses short and punchy. You're a butler, not a chatbot.`,
       prompt: userText,
       maxSteps: 10,
@@ -384,6 +389,136 @@ RULES:
           parameters: z.object({}),
           execute: async () => {
             return await getGitHubNotifications();
+          },
+        }),
+
+        // ── GOOGLE TOOLS ──────────────────────────────────────────────────────
+        draftEmail: tool({
+          description: "Create a Gmail draft. Use when user says 'draft', 'write', or 'prepare' an email. Default to this over sendEmail.",
+          parameters: z.object({
+            to: z.string().describe("Recipient email address"),
+            subject: z.string(),
+            body: z.string().describe("Plain text email body"),
+          }),
+          execute: async ({ to, subject, body }) => {
+            return await draftEmail(to, subject, body);
+          },
+        }),
+
+        sendEmail: tool({
+          description: "Send an email immediately via Gmail. Only use when user explicitly says 'send' — default to draftEmail.",
+          parameters: z.object({
+            to: z.string().describe("Recipient email address"),
+            subject: z.string(),
+            body: z.string().describe("Plain text email body"),
+          }),
+          execute: async ({ to, subject, body }) => {
+            return await sendEmail(to, subject, body);
+          },
+        }),
+
+        searchEmails: tool({
+          description: "Search Gmail inbox using Gmail search syntax (from:, subject:, is:unread, etc.).",
+          parameters: z.object({
+            query: z.string().describe("Gmail search query e.g. 'from:john@example.com is:unread'"),
+          }),
+          execute: async ({ query }) => {
+            return await searchEmails(query);
+          },
+        }),
+
+        getCalendar: tool({
+          description: "Get upcoming calendar events for the next N days.",
+          parameters: z.object({
+            days: z.number().default(7).describe("Number of days ahead to check"),
+          }),
+          execute: async ({ days }) => {
+            return await getUpcomingEvents(days);
+          },
+        }),
+
+        createCalendarEvent: tool({
+          description: "Create a new event on the user's Google Calendar.",
+          parameters: z.object({
+            title: z.string(),
+            start: z.string().describe("ISO 8601 datetime e.g. '2025-04-10T14:00:00-05:00'"),
+            end: z.string().describe("ISO 8601 datetime"),
+            description: z.string().optional(),
+          }),
+          execute: async ({ title, start, end, description }) => {
+            return await createCalendarEvent(title, start, end, description);
+          },
+        }),
+
+        createGoogleDoc: tool({
+          description: "Create a Google Doc with title and content. Use when user says 'write up', 'document', 'create a doc'.",
+          parameters: z.object({
+            title: z.string(),
+            content: z.string().describe("Plain text content for the document"),
+          }),
+          execute: async ({ title, content }) => {
+            return await createGoogleDoc(title, content);
+          },
+        }),
+
+        // ── GOHIGHLEVEL CRM TOOLS ─────────────────────────────────────────────
+        searchCRMContacts: tool({
+          description: "Search GoHighLevel CRM contacts by name, email, or phone.",
+          parameters: z.object({
+            query: z.string().describe("Name, email, or phone to search for"),
+          }),
+          execute: async ({ query }) => {
+            return await searchContacts(query);
+          },
+        }),
+
+        createCRMContact: tool({
+          description: "Add a new contact/lead to GoHighLevel CRM.",
+          parameters: z.object({
+            firstName: z.string(),
+            lastName: z.string().optional(),
+            email: z.string().optional(),
+            phone: z.string().optional(),
+            tags: z.array(z.string()).optional(),
+          }),
+          execute: async ({ firstName, lastName, email, phone, tags }) => {
+            return await createContact({ firstName, lastName, email, phone, tags });
+          },
+        }),
+
+        updateCRMContact: tool({
+          description: "Update an existing GoHighLevel contact by their contact ID.",
+          parameters: z.object({
+            contactId: z.string(),
+            firstName: z.string().optional(),
+            lastName: z.string().optional(),
+            email: z.string().optional(),
+            phone: z.string().optional(),
+            tags: z.array(z.string()).optional(),
+          }),
+          execute: async ({ contactId, ...fields }) => {
+            return await updateContact(contactId, fields);
+          },
+        }),
+
+        getPipeline: tool({
+          description: "Check the GoHighLevel sales pipeline and see where deals stand.",
+          parameters: z.object({
+            pipelineId: z.string().optional().describe("Specific pipeline ID — omit to get all deals"),
+          }),
+          execute: async ({ pipelineId }) => {
+            return await getPipelineDeals(pipelineId);
+          },
+        }),
+
+        sendSMSToContact: tool({
+          description: "Send an SMS to a GoHighLevel contact by their contact ID.",
+          parameters: z.object({
+            contactId: z.string().describe("The GHL contact ID (use searchCRMContacts first to find it)"),
+            message: z.string(),
+          }),
+          execute: async ({ contactId, message }) => {
+            return await sendSMS(contactId, message);
           },
         }),
       },
