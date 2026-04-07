@@ -125,7 +125,7 @@ RULES:
 - **DELEGATION**: When the user asks what you can take off their plate, use reviewTasksForDelegation, then executeAgentTask for confirmed items.
 - **GOOGLE WORKSPACE**: You can draft/send emails, search Gmail, check/create Calendar events, and create Google Docs.
 - **ALL EMAILS go through draftEmail first** — whether the user says "send", "draft", "write", or "email someone". Always preview before sending. Never skip the draft step.
-- **SEND CONFIRMATION**: If the user says "yes", "send it", "go ahead", "looks good", or any confirmation — use sendLastDraft immediately. Never ask for details again.
+- **SEND CONFIRMATION**: "send it", "yes", "go ahead", "looks good", "do it" = ALWAYS call sendLastDraft tool. No exceptions. Do not reply with text first.
 - **DRAFT DISPLAY**: When draftEmail returns, show the full email in your reply like this:
   ✉️ Draft ready — reply "send it" to send or tell me what to change.
 
@@ -422,7 +422,7 @@ RULES:
         }),
 
         sendLastDraft: tool({
-          description: "Send the last email Alfred drafted when user says 'send it', 'yes send it', 'go ahead and send', or similar confirmations referring to a previous draft.",
+          description: "ALWAYS call this tool when the user says 'send it', 'yes', 'send', 'go ahead', 'looks good', or any short confirmation after seeing a draft. Do NOT reply with text — call this tool immediately.",
           parameters: z.object({}),
           execute: async () => {
             const user = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
