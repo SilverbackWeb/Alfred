@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
 import { sendSlackMessage, listSlackChannels } from "@/lib/slack";
 import { draftEmail, sendEmail, searchEmails, getUpcomingEvents, createCalendarEvent, createGoogleDoc } from "@/lib/google";
-import { searchContacts, createContact, updateContact, getPipelineDeals, sendSMS } from "@/lib/gohighlevel";
+import { searchContacts, createContact, updateContact, getPipelineDeals, updateOpportunity, sendSMS } from "@/lib/gohighlevel";
 import { getDocumentProxy, extractText } from "unpdf";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -550,6 +550,19 @@ RULES:
           }),
           execute: async ({ pipelineId }) => {
             return await getPipelineDeals(pipelineId);
+          },
+        }),
+
+        updateOpportunity: tool({
+          description: "Update a GHL opportunity/deal status (open, won, lost, abandoned) or value. Use getPipeline first to find the opportunity ID.",
+          parameters: z.object({
+            opportunityId: z.string().describe("The GHL opportunity ID"),
+            status: z.enum(["open", "won", "lost", "abandoned"]).optional(),
+            monetaryValue: z.number().optional(),
+            name: z.string().optional(),
+          }),
+          execute: async ({ opportunityId, status, monetaryValue, name }) => {
+            return await updateOpportunity(opportunityId, { status, monetaryValue, name });
           },
         }),
 

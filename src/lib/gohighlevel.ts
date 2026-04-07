@@ -111,6 +111,27 @@ export async function getPipelineDeals(pipelineId?: string) {
   }
 }
 
+export async function updateOpportunity(opportunityId: string, data: {
+  status?: "open" | "won" | "lost" | "abandoned";
+  monetaryValue?: number;
+  name?: string;
+  pipelineStageId?: string;
+}) {
+  const err = checkCredentials();
+  if (err) return err;
+  try {
+    const res = await fetch(`${GHL_BASE}/opportunities/${opportunityId}`, {
+      method: "PUT",
+      headers: ghlHeaders(),
+      body: JSON.stringify(data),
+    });
+    const result = await res.json();
+    return { success: true, id: result.opportunity?.id, status: result.opportunity?.status, name: result.opportunity?.name };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // ── MESSAGING ─────────────────────────────────────────────────────────────────
 
 export async function sendSMS(contactId: string, message: string) {
