@@ -5,7 +5,8 @@ import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
-import pdfParse from "pdf-parse";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require("pdf-parse");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 
