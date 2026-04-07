@@ -68,34 +68,28 @@ export default function DashboardClient({ initialTasks }: { initialTasks: Task[]
     <div className="flex flex-col gap-8">
 
       {/* View Mode Toggle */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 bg-gray-900/50 p-2 rounded-xl border border-gray-800 shadow-xl">
-          <button
-            onClick={() => setViewMode("FOCUS")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${viewMode === "FOCUS" ? "bg-indigo-500/20 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
-          >
-            <Zap className="w-4 h-4" /> Focus Mode
-          </button>
-          <button
-            onClick={() => setViewMode("VAULT")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${viewMode === "VAULT" ? "bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
-          >
-            <FolderArchive className="w-4 h-4" /> The Vault
-          </button>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowCompleted(v => !v)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border transition-all duration-300 ${showCompleted ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-gray-900/40 text-gray-400 border-gray-800 hover:text-gray-200"}`}
-          >
-            <History className="w-4 h-4" />
-            Completed {completed.length > 0 && `(${completed.length})`}
-          </button>
-          <p className="text-sm font-medium text-gray-400 border border-gray-800 bg-gray-900/40 px-4 py-2 rounded-full">
-            {viewMode === "FOCUS" ? `${toDos.length + inProgress.length + agentTasks.length} Active` : `${vaultTasks.length} in Vault`}
-          </p>
-        </div>
+      <div className="flex items-center w-full bg-gray-900/50 p-1.5 rounded-xl border border-gray-800 shadow-xl">
+        <button
+          onClick={() => { setViewMode("FOCUS"); setShowCompleted(false); }}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${!showCompleted && viewMode === "FOCUS" ? "bg-indigo-500/20 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
+        >
+          <Zap className="w-4 h-4 shrink-0" />
+          <span>Focus</span>
+        </button>
+        <button
+          onClick={() => { setViewMode("VAULT"); setShowCompleted(false); }}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${!showCompleted && viewMode === "VAULT" ? "bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "text-gray-400 hover:text-gray-200"}`}
+        >
+          <FolderArchive className="w-4 h-4 shrink-0" />
+          <span>The Vault</span>
+        </button>
+        <button
+          onClick={() => setShowCompleted(v => !v)}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${showCompleted ? "bg-gray-500/20 text-gray-300 shadow-inner" : "text-gray-400 hover:text-gray-200"}`}
+        >
+          <History className="w-4 h-4 shrink-0" />
+          <span>Completed</span>
+        </button>
       </div>
 
       {viewMode === "FOCUS" && nextUp && (
