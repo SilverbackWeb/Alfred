@@ -720,8 +720,35 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
     });
 
     if (replyText) {
-      await sendMessage(chatId, replyText);
-      // Save Alfred's reply to conversation history
+      // Intercept: if Alfred wrote a draft as text instead of calling the tool,
+      // parse it and send the buttons ourselves so the flow always works
+      const draftPattern = /To:\s*(\S+@\S+)\s*\/??\s*Subject:\s*(.+?)\s*\n+([\s\S]+)/i;
+      const draftMatch = replyText.match(draftPattern);
+
+      if (draftMatch) {
+        const [, to, subject, body] = draftMatch;
+        const cleanBody = body.trim();
+
+        // Save to DB so button tap works
+        await prisma.user.update({
+          where: { id: userRecord.id },
+          data: { lastDraftTo: to.trim(), lastDraftSubject: subject.trim(), lastDraftBody: cleanBody },
+        });
+
+        // Also save to Gmail drafts folder
+        await draftEmail(to.trim(), subject.trim(), cleanBody);
+
+        // Send draft with buttons (suppress the raw text reply)
+        await sendMessageWithButtons(
+          chatId,
+          `To: ${to.trim()}\nSubject: ${subject.trim()}\n\n${cleanBody}`,
+          [[{ text: "Send", callback_data: "send_draft" }, { text: "Cancel", callback_data: "cancel_draft" }]]
+        );
+        await sendMessage(chatId, "Draft ready — tap Send or tell me what to change.");
+      } else {
+        await sendMessage(chatId, replyText);
+      }
+
       await prisma.message.create({
         data: { role: "assistant", content: replyText, userId: userRecord.id },
       });
