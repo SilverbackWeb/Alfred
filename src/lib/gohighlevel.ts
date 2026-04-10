@@ -160,6 +160,51 @@ export async function updateOpportunity(opportunityId: string, data: {
   }
 }
 
+// ── CONVERSATIONS ─────────────────────────────────────────────────────────────
+
+export async function getUnrepliedConversations() {
+  const err = checkCredentials();
+  if (err) return [];
+  try {
+    // Fetch recent conversations that are unread or need attention
+    const params = new URLSearchParams({
+      locationId: process.env.GHL_LOCATION_ID!,
+      status: "open",
+      limit: "50",
+    });
+    const res = await fetch(`${GHL_BASE}/conversations/search?${params}`, { headers: ghlHeaders() });
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    const conversations = data.conversations || [];
+
+    // Filter to ones with unread inbound messages
+    return conversations
+      .filter((c: { unreadCount: number; lastMessageType: string; lastMessageDirection: string }) =>
+        c.unreadCount > 0 || c.lastMessageDirection === "inbound"
+      )
+      .slice(0, 20)
+      .map((c: {
+        id: string;
+        contactName: string;
+        lastMessageBody: string;
+        lastMessageType: string;
+        lastMessageDate: string;
+        unreadCount: number;
+      }) => ({
+        id: c.id,
+        contact: c.contactName || "Unknown",
+        lastMessage: (c.lastMessageBody || "").slice(0, 100),
+        type: c.lastMessageType || "message",
+        date: c.lastMessageDate,
+        unread: c.unreadCount || 0,
+      }));
+  } catch (e) {
+    console.error("GHL conversations error:", e);
+    return [];
+  }
+}
+
 // ── MESSAGING ─────────────────────────────────────────────────────────────────
 
 export async function sendSMS(contactId: string, message: string) {
