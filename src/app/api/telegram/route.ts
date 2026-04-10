@@ -32,6 +32,41 @@ async function sendMessage(chatId: number, text: string) {
   });
 }
 
+async function sendMessageWithButtons(
+  chatId: number,
+  text: string,
+  buttons: { text: string; callback_data: string }[][]
+) {
+  if (!TELEGRAM_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      reply_markup: { inline_keyboard: buttons },
+    }),
+  });
+}
+
+async function answerCallbackQuery(callbackQueryId: string, text?: string) {
+  if (!TELEGRAM_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+  });
+}
+
+async function removeButtons(chatId: number, messageId: number) {
+  if (!TELEGRAM_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/editMessageReplyMarkup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
+  });
+}
+
 async function handlePdf(message: any, chatId: number) {
   await sendMessage(chatId, "📄 Got your PDF. Extracting tasks...");
 
@@ -112,6 +147,43 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
+
+    // Handle inline button taps (callback_query)
+    if (body.callback_query) {
+      const cq = body.callback_query;
+      const cbChatId: number = cq.message.chat.id;
+      const cbMessageId: number = cq.message.message_id;
+      const data: string = cq.data || "";
+
+      await answerCallbackQuery(cq.id);
+
+      if (data === "send_draft") {
+        const user = await prisma.user.findFirst({ where: { telegramId: cbChatId.toString() } });
+        if (user?.lastDraftTo && user?.lastDraftSubject && user?.lastDraftBody) {
+          const result = await sendEmail(user.lastDraftTo, user.lastDraftSubject, user.lastDraftBody);
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
+          });
+          await removeButtons(cbChatId, cbMessageId);
+          const reply = "error" in result ? `Failed to send: ${result.error}` : `Sent to ${user.lastDraftTo}.`;
+          await sendMessage(cbChatId, reply);
+          if (user) await prisma.message.create({ data: { role: "assistant", content: reply, userId: user.id } });
+        } else {
+          await sendMessage(cbChatId, "No draft found — ask me to draft an email first.");
+        }
+      } else if (data === "cancel_draft") {
+        await prisma.user.updateMany({
+          where: { telegramId: cbChatId.toString() },
+          data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
+        });
+        await removeButtons(cbChatId, cbMessageId);
+        await sendMessage(cbChatId, "Draft cancelled.");
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
     const message = body.message;
     if (!message) return NextResponse.json({ ok: true });
 
@@ -478,14 +550,20 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
             body: z.string().describe("Plain text email body"),
           }),
           execute: async ({ to, subject, body }) => {
-            // Save draft details to user record so "send it" works later
+            // Save draft to DB for button-tap flow
             await prisma.user.upsert({
               where: { telegramId: chatId.toString() },
               update: { lastDraftTo: to, lastDraftSubject: subject, lastDraftBody: body },
               create: { telegramId: chatId.toString(), name: message.chat.first_name || "User", lastDraftTo: to, lastDraftSubject: subject, lastDraftBody: body },
             });
             await draftEmail(to, subject, body);
-            // Return the full draft for display in Telegram — no link needed
+            // Send a separate message with Send/Cancel buttons
+            await sendMessageWithButtons(chatId, `To: ${to}\nSubject: ${subject}\n\n${body}`, [
+              [
+                { text: "Send", callback_data: "send_draft" },
+                { text: "Cancel", callback_data: "cancel_draft" },
+              ],
+            ]);
             return { to, subject, body, preview: true };
           },
         }),
