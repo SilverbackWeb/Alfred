@@ -196,7 +196,7 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
   ✉️ Draft ready — reply "send it" to send or tell me what to change.
   To: [to] / Subject: [subject]
   [body]
-- **SEND CONFIRMATION**: If user confirms after a draft, call sendLastDraft immediately.`;
+- **SEND CONFIRMATION**: If user confirms after a draft, call sendLastDraft immediately — pass the to/subject/body values from the draft you just created. You already have them. Do not look them up from DB.`;
 
     const { text: replyText } = await generateText({
       model: openai("gpt-4o-mini", { structuredOutputs: false }),
@@ -491,15 +491,15 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
         }),
 
         sendLastDraft: tool({
-          description: "ALWAYS call this tool when the user says 'send it', 'yes', 'send', 'go ahead', 'looks good', or any short confirmation after seeing a draft. Do NOT reply with text — call this tool immediately.",
-          parameters: z.object({}),
-          execute: async () => {
-            const user = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
-            if (!user?.lastDraftTo || !user?.lastDraftSubject || !user?.lastDraftBody) {
-              return { error: "No draft found. Please ask me to draft an email first." };
-            }
-            const result = await sendEmail(user.lastDraftTo, user.lastDraftSubject, user.lastDraftBody);
-            // Clear the draft after sending
+          description: "ALWAYS call this tool when the user says 'send it', 'yes', 'send', 'go ahead', 'looks good', or any short confirmation after seeing a draft. Pass the to/subject/body from the draft you just showed — do NOT look them up, you already have them from this conversation.",
+          parameters: z.object({
+            to: z.string().describe("Recipient email — from the draft you just showed"),
+            subject: z.string().describe("Subject — from the draft you just showed"),
+            body: z.string().describe("Body — from the draft you just showed"),
+          }),
+          execute: async ({ to, subject, body }) => {
+            const result = await sendEmail(to, subject, body);
+            // Clear saved draft fields
             await prisma.user.update({
               where: { telegramId: chatId.toString() },
               data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
