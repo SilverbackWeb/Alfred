@@ -155,15 +155,17 @@ export async function POST(req: Request) {
     // Hard-coded confirmation detection — bypass AI entirely for send confirmations
     const confirmWords = /^(yes|send it|go ahead|do it|looks good|confirmed|send|yep|yup|ok send it|yes send it|send that|send the email)[\s!.]*$/i;
     if (confirmWords.test(userText.trim())) {
-      if (userRecord?.lastDraftTo && userRecord?.lastDraftSubject && userRecord?.lastDraftBody) {
-        const result = await sendEmail(userRecord.lastDraftTo, userRecord.lastDraftSubject, userRecord.lastDraftBody);
+      // Re-fetch fresh from DB — avoids Vercel connection pool returning stale data
+      const freshUser = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
+      if (freshUser?.lastDraftTo && freshUser?.lastDraftSubject && freshUser?.lastDraftBody) {
+        const result = await sendEmail(freshUser.lastDraftTo, freshUser.lastDraftSubject, freshUser.lastDraftBody);
         await prisma.user.update({
           where: { telegramId: chatId.toString() },
           data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
         });
         const reply = "error" in result
           ? `❌ Failed to send: ${result.error}`
-          : `✅ Email sent to ${userRecord.lastDraftTo}!`;
+          : `Sent to ${freshUser.lastDraftTo}.`;
         await sendMessage(chatId, reply);
         await prisma.message.create({ data: { role: "assistant", content: reply, userId: userRecord.id } });
         return NextResponse.json({ ok: true });
