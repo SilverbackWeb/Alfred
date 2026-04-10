@@ -21,61 +21,73 @@ async function getOwnerChatId(): Promise<string | null> {
 }
 
 export async function POST(req: Request) {
+  let body: Record<string, unknown> = {};
+
+  // GHL workflow webhooks can send JSON or form-encoded — handle both
   try {
-    const body = await req.json();
-
-    // DEBUG: forward the raw payload so we can see what GHL actually sends
-    const chatId = await getOwnerChatId();
-    if (chatId) {
-      await sendTelegram(chatId, `[GHL DEBUG] Raw payload:\n${JSON.stringify(body, null, 2).slice(0, 3000)}`);
+    const contentType = req.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      body = await req.json();
+    } else {
+      const text = await req.text();
+      try {
+        body = JSON.parse(text);
+      } catch {
+        // form-encoded fallback
+        const params = new URLSearchParams(text);
+        params.forEach((v, k) => { body[k] = v; });
+      }
     }
+  } catch (e) {
+    console.error("GHL payload parse error:", e);
+    return NextResponse.json({ ok: true });
+  }
 
-    const type: string = body.type || body.event || body.eventType || "";
+  const chatId = await getOwnerChatId();
 
-    // Only process inbound messages
-    if (!type.toLowerCase().includes("inbound")) {
-      return NextResponse.json({ ok: true });
-    }
+  // DEBUG: send raw payload to Telegram so we can see the structure
+  if (chatId) {
+    await sendTelegram(chatId, `[GHL DEBUG]\n${JSON.stringify(body, null, 2).slice(0, 3000)}`);
+  }
 
-    const messageType: string = body.messageType || body.type || "Message";
-    const contactId: string | undefined = body.contactId || body.contact?.id;
-    const rawBody: string = body.body || body.message?.body || body.text || "";
-    const subject: string = body.subject || body.email?.subject || "";
+  try {
+    // Extract contact info — GHL workflow webhooks nest data differently
+    const contact = (body.contact as Record<string, unknown>) || {};
+    const contactId = (body.contactId || contact.id || "") as string;
 
-    if (!rawBody && !subject) {
-      return NextResponse.json({ ok: true });
-    }
-
-    // Look up contact name from GHL
-    let senderName: string =
+    let senderName = (
       body.contactName ||
-      body.contact?.name ||
-      `${body.contact?.firstName || ""} ${body.contact?.lastName || ""}`.trim() ||
-      body.name ||
-      "Unknown";
+      body.fullName ||
+      contact.name ||
+      `${contact.firstName || ""} ${contact.lastName || ""}`.trim() ||
+      contact.email ||
+      contact.phone ||
+      ""
+    ) as string;
 
-    if (contactId && (senderName === "Unknown" || senderName === "")) {
-      const contact = await getContactById(contactId);
-      if (contact?.name) senderName = contact.name;
+    if (!senderName && contactId) {
+      const fetched = await getContactById(contactId);
+      if (fetched?.name) senderName = fetched.name;
     }
 
-    // Build notification
+    const rawBody = (body.body || body.message || body.messageBody || body.text || "") as string;
+    const subject = (body.subject || body.emailSubject || "") as string;
+    const messageType = (body.messageType || body.type || "") as string;
+
     const isEmail = messageType.toLowerCase().includes("email");
-    const isSMS = messageType.toLowerCase().includes("sms");
-    const typeLabel = isEmail ? "📧 Email" : isSMS ? "📱 Text" : "💬 Message";
+    const typeLabel = isEmail ? "📧 Email" : "📱 Text";
 
     let notifText = `${typeLabel} from ${senderName || "Unknown"}`;
     if (isEmail && subject) notifText += `\nSubject: ${subject}`;
     if (rawBody) notifText += `\n\n${rawBody.slice(0, 500)}`;
-    if (rawBody.length > 500) notifText += "\n[...]";
 
-    if (chatId) {
-      await sendTelegram(chatId, notifText);
+    // Only send the real notification if we have meaningful content
+    if (rawBody || subject) {
+      if (chatId) await sendTelegram(chatId, notifText);
     }
-
-    return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("GHL Webhook Error:", error);
-    return NextResponse.json({ ok: true });
+    console.error("GHL Webhook processing error:", error);
   }
+
+  return NextResponse.json({ ok: true });
 }
