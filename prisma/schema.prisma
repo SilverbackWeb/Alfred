@@ -11,11 +11,13 @@ model User {
   id          String   @id @default(uuid())
   telegramId  String?  @unique
   name        String?
-  lastDraftTo      String?
-  lastDraftSubject String?
-  lastDraftBody    String?
-  lastPipeline     String?  // JSON array of last pipeline results shown
-  preferences      String?  // JSON array of learned user preferences
+  lastDraftTo         String?
+  lastDraftSubject    String?
+  lastDraftBody       String?
+  lastDraftContactId  String?  // GHL contact_id if replying via GHL
+  lastDraftChannel    String?  // "gmail" | "ghl_email" | "ghl_sms"
+  lastPipeline        String?  // JSON array of last pipeline results shown
+  preferences         String?  // JSON array of learned user preferences
   tasks       Task[]
   ideas       Idea[]
   messages    Message[]

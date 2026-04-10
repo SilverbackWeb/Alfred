@@ -205,6 +205,29 @@ export async function getUnrepliedConversations() {
 
 // ── MESSAGING ─────────────────────────────────────────────────────────────────
 
+export async function sendGHLEmail(contactId: string, subject: string, body: string) {
+  const err = checkCredentials();
+  if (err) return err;
+  try {
+    const res = await fetch(`${GHL_BASE}/conversations/messages`, {
+      method: "POST",
+      headers: ghlHeaders(),
+      body: JSON.stringify({
+        type: "Email",
+        contactId,
+        subject,
+        body,
+        locationId: process.env.GHL_LOCATION_ID,
+      }),
+    });
+    const result = await res.json();
+    if (!res.ok) return { error: `GHL email error ${res.status}: ${JSON.stringify(result)}` };
+    return { success: true, messageId: result.messageId || result.id };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function sendSMS(contactId: string, message: string) {
   const err = checkCredentials();
   if (err) return err;

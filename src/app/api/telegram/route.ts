@@ -9,7 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { listUserRepos, searchUserRepos, getRepoIssues, getGitHubNotifications } from "@/lib/github";
 import { sendSlackMessage, listSlackChannels } from "@/lib/slack";
 import { draftEmail, sendEmail, searchEmails, getUpcomingEvents, createCalendarEvent, createGoogleDoc } from "@/lib/google";
-import { searchContacts, createContact, updateContact, getPipelineDeals, updateOpportunity, sendSMS } from "@/lib/gohighlevel";
+import { searchContacts, createContact, updateContact, getPipelineDeals, updateOpportunity, sendSMS, sendGHLEmail } from "@/lib/gohighlevel";
 import { getDocumentProxy, extractText } from "unpdf";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -159,14 +159,26 @@ export async function POST(req: Request) {
 
       if (data === "send_draft") {
         const user = await prisma.user.findFirst({ where: { telegramId: cbChatId.toString() } });
-        if (user?.lastDraftTo && user?.lastDraftSubject && user?.lastDraftBody) {
-          const result = await sendEmail(user.lastDraftTo, user.lastDraftSubject, user.lastDraftBody);
+        if (user?.lastDraftSubject && user?.lastDraftBody) {
+          let result: { success?: boolean; error?: string; messageId?: string } = {};
+
+          if (user.lastDraftChannel === "ghl_email" && user.lastDraftContactId) {
+            // Reply via GHL so the conversation is marked as replied/read in CRM
+            result = await sendGHLEmail(user.lastDraftContactId, user.lastDraftSubject, user.lastDraftBody) as typeof result;
+          } else if (user.lastDraftChannel === "ghl_sms" && user.lastDraftContactId) {
+            result = await sendSMS(user.lastDraftContactId, user.lastDraftBody) as typeof result;
+          } else {
+            // Default: send via Gmail
+            result = await sendEmail(user.lastDraftTo!, user.lastDraftSubject, user.lastDraftBody) as typeof result;
+          }
+
           await prisma.user.update({
             where: { id: user.id },
-            data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
+            data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null, lastDraftContactId: null, lastDraftChannel: null },
           });
           await removeButtons(cbChatId, cbMessageId);
-          const reply = "error" in result ? `Failed to send: ${result.error}` : `Sent to ${user.lastDraftTo}.`;
+          const sentTo = user.lastDraftChannel?.startsWith("ghl") ? `${user.lastDraftTo} via GHL` : user.lastDraftTo;
+          const reply = "error" in result && result.error ? `Failed to send: ${result.error}` : `Sent to ${sentTo}.`;
           await sendMessage(cbChatId, reply);
           if (user) await prisma.message.create({ data: { role: "assistant", content: reply, userId: user.id } });
         } else {
@@ -175,7 +187,7 @@ export async function POST(req: Request) {
       } else if (data === "cancel_draft") {
         await prisma.user.updateMany({
           where: { telegramId: cbChatId.toString() },
-          data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
+          data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null, lastDraftContactId: null, lastDraftChannel: null },
         });
         await removeButtons(cbChatId, cbMessageId);
         await sendMessage(cbChatId, "Draft cancelled.");
@@ -243,8 +255,9 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
 - **DELEGATION**: When asked what you can take off their plate, use reviewTasksForDelegation then executeAgentTask.
-- **EMAILS**: When asked to draft, write, send, or reply to any email — call the draftEmail tool. That is all. Do not write the email content in your text reply. Do not show the draft yourself. The tool handles the display and the Send button.
-- **AFTER calling draftEmail**: your text reply must be only "Draft ready — tap Send or tell me what to change." Nothing else.
+- **REPLYING TO GHL CONTACTS**: If conversation history contains a GHL contact_id for the person (from an [Incoming Email] or [Incoming Text] entry), use the replyToGHLContact tool — NOT draftEmail. This routes the reply through GHL so the conversation is marked as read in the CRM.
+- **OTHER EMAILS**: use draftEmail for emails to anyone not in GHL conversation history.
+- **AFTER calling either draft tool**: say only "Draft ready — tap Send or tell me what to change." Do not write email content in your text response.
 - **NEVER write email content in your text response** — not the To, not the Subject, not the body. Only the tool does that.`;
 
     const { text: replyText } = await generateText({
@@ -592,6 +605,45 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
         }),
 
         // ── GOHIGHLEVEL CRM TOOLS ─────────────────────────────────────────────
+        replyToGHLContact: tool({
+          description: "Use this instead of draftEmail when replying to someone who contacted you via GHL (their GHL contact_id is in conversation history). Drafts the reply through GHL so the conversation is marked as replied in the CRM.",
+          parameters: z.object({
+            contactId: z.string().describe("GHL contact_id from conversation history"),
+            contactName: z.string().describe("Contact's name for display"),
+            contactEmail: z.string().optional().describe("Contact's email address"),
+            subject: z.string(),
+            body: z.string(),
+            channel: z.enum(["ghl_email", "ghl_sms"]).describe("ghl_email for email replies, ghl_sms for text replies"),
+          }),
+          execute: async ({ contactId, contactName, contactEmail, subject, body, channel }) => {
+            await prisma.user.upsert({
+              where: { telegramId: chatId.toString() },
+              update: {
+                lastDraftTo: contactEmail || contactName,
+                lastDraftSubject: subject,
+                lastDraftBody: body,
+                lastDraftContactId: contactId,
+                lastDraftChannel: channel,
+              },
+              create: {
+                telegramId: chatId.toString(),
+                name: message.chat.first_name || "User",
+                lastDraftTo: contactEmail || contactName,
+                lastDraftSubject: subject,
+                lastDraftBody: body,
+                lastDraftContactId: contactId,
+                lastDraftChannel: channel,
+              },
+            });
+            await sendMessageWithButtons(
+              chatId,
+              `To: ${contactName}${contactEmail ? ` <${contactEmail}>` : ""}\nSubject: ${subject}\n\n${body}`,
+              [[{ text: "Send", callback_data: "send_draft" }, { text: "Cancel", callback_data: "cancel_draft" }]]
+            );
+            return { preview: true, channel, contactId };
+          },
+        }),
+
         searchCRMContacts: tool({
           description: "Search GoHighLevel CRM contacts by name, email, or phone.",
           parameters: z.object({
@@ -729,14 +781,16 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
         const [, to, subject, body] = draftMatch;
         const cleanBody = body.trim();
 
-        // Save to DB so button tap works
+        // Preserve channel/contactId if already set by replyToGHLContact tool
+        const existingUser = await prisma.user.findUnique({ where: { id: userRecord.id } });
+        const channel = existingUser?.lastDraftChannel || "gmail";
         await prisma.user.update({
           where: { id: userRecord.id },
-          data: { lastDraftTo: to.trim(), lastDraftSubject: subject.trim(), lastDraftBody: cleanBody },
+          data: { lastDraftTo: to.trim(), lastDraftSubject: subject.trim(), lastDraftBody: cleanBody, lastDraftChannel: channel },
         });
 
-        // Also save to Gmail drafts folder
-        await draftEmail(to.trim(), subject.trim(), cleanBody);
+        // Save to Gmail drafts folder only for gmail channel
+        if (channel === "gmail") await draftEmail(to.trim(), subject.trim(), cleanBody);
 
         // Send draft with buttons (suppress the raw text reply)
         await sendMessageWithButtons(
