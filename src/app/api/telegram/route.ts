@@ -224,26 +224,6 @@ export async function POST(req: Request) {
       data: { role: "user", content: userText, userId: userRecord.id },
     });
 
-    // Hard-coded confirmation detection — bypass AI entirely for send confirmations
-    const confirmWords = /^(yes|send it|go ahead|do it|looks good|confirmed|send|yep|yup|ok send it|yes send it|send that|send the email)[\s!.]*$/i;
-    if (confirmWords.test(userText.trim())) {
-      // Re-fetch fresh from DB — avoids Vercel connection pool returning stale data
-      const freshUser = await prisma.user.findUnique({ where: { telegramId: chatId.toString() } });
-      if (freshUser?.lastDraftTo && freshUser?.lastDraftSubject && freshUser?.lastDraftBody) {
-        const result = await sendEmail(freshUser.lastDraftTo, freshUser.lastDraftSubject, freshUser.lastDraftBody);
-        await prisma.user.update({
-          where: { telegramId: chatId.toString() },
-          data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
-        });
-        const reply = "error" in result
-          ? `❌ Failed to send: ${result.error}`
-          : `Sent to ${freshUser.lastDraftTo}.`;
-        await sendMessage(chatId, reply);
-        await prisma.message.create({ data: { role: "assistant", content: reply, userId: userRecord.id } });
-        return NextResponse.json({ ok: true });
-      }
-    }
-
     // Build system prompt: base persona + learned preferences
     const prefs: string[] = userRecord.preferences ? JSON.parse(userRecord.preferences) : [];
     const prefsBlock = prefs.length > 0
@@ -263,12 +243,9 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
 - **DELEGATION**: When asked what you can take off their plate, use reviewTasksForDelegation then executeAgentTask.
-- **ALL EMAILS go through draftEmail first** — always preview before sending. Never skip the draft step.
-- **DRAFT DISPLAY**: When draftEmail returns, show the full email:
-  ✉️ Draft ready — reply "send it" to send or tell me what to change.
-  To: [to] / Subject: [subject]
-  [body]
-- **SEND CONFIRMATION**: If user confirms after a draft, call sendLastDraft immediately — pass the to/subject/body values from the draft you just created. You already have them. Do not look them up from DB.`;
+- **ALL EMAILS go through draftEmail only** — always call draftEmail and stop. Never send directly. The user will tap a button to send.
+- **AFTER draftEmail**: just say "Draft ready — tap Send to send or tell me what to change." Nothing else. The draft preview is already shown by the button message.
+- **NEVER call any send function** — sending is handled by the Send button, not by you.`;
 
     const { text: replyText } = await generateText({
       model: openai("gpt-4o-mini", { structuredOutputs: false }),
@@ -568,23 +545,6 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
           },
         }),
 
-        sendLastDraft: tool({
-          description: "ALWAYS call this tool when the user says 'send it', 'yes', 'send', 'go ahead', 'looks good', or any short confirmation after seeing a draft. Pass the to/subject/body from the draft you just showed — do NOT look them up, you already have them from this conversation.",
-          parameters: z.object({
-            to: z.string().describe("Recipient email — from the draft you just showed"),
-            subject: z.string().describe("Subject — from the draft you just showed"),
-            body: z.string().describe("Body — from the draft you just showed"),
-          }),
-          execute: async ({ to, subject, body }) => {
-            const result = await sendEmail(to, subject, body);
-            // Clear saved draft fields
-            await prisma.user.update({
-              where: { telegramId: chatId.toString() },
-              data: { lastDraftTo: null, lastDraftSubject: null, lastDraftBody: null },
-            });
-            return result;
-          },
-        }),
 
 
         searchEmails: tool({
