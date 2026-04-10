@@ -45,46 +45,33 @@ export async function POST(req: Request) {
 
   const chatId = await getOwnerChatId();
 
-  // DEBUG: send raw payload to Telegram so we can see the structure
-  if (chatId) {
-    await sendTelegram(chatId, `[GHL DEBUG]\n${JSON.stringify(body, null, 2).slice(0, 3000)}`);
-  }
-
   try {
-    // Extract contact info — GHL workflow webhooks nest data differently
-    const contact = (body.contact as Record<string, unknown>) || {};
-    const contactId = (body.contactId || contact.id || "") as string;
+    const customData = (body.customData as Record<string, unknown>) || {};
+    const message = (body.message as Record<string, unknown>) || {};
 
-    let senderName = (
-      body.contactName ||
-      body.fullName ||
-      contact.name ||
-      `${contact.firstName || ""} ${contact.lastName || ""}`.trim() ||
-      contact.email ||
-      contact.phone ||
+    // GHL workflow payload uses these exact fields
+    const senderName = (
+      customData.contact_name ||
+      body.full_name ||
+      `${body.first_name || ""} ${body.last_name || ""}`.trim() ||
+      body.email ||
+      "Unknown"
+    ) as string;
+
+    const rawBody = (
+      customData.message_body ||
+      message.body ||
       ""
     ) as string;
 
-    if (!senderName && contactId) {
-      const fetched = await getContactById(contactId);
-      if (fetched?.name) senderName = fetched.name;
+    const trimmed = rawBody.trim();
+    if (!trimmed) {
+      return NextResponse.json({ ok: true });
     }
 
-    const rawBody = (body.body || body.message || body.messageBody || body.text || "") as string;
-    const subject = (body.subject || body.emailSubject || "") as string;
-    const messageType = (body.messageType || body.type || "") as string;
+    const notifText = `📱 New message from ${senderName}\n\n${trimmed.slice(0, 500)}`;
 
-    const isEmail = messageType.toLowerCase().includes("email");
-    const typeLabel = isEmail ? "📧 Email" : "📱 Text";
-
-    let notifText = `${typeLabel} from ${senderName || "Unknown"}`;
-    if (isEmail && subject) notifText += `\nSubject: ${subject}`;
-    if (rawBody) notifText += `\n\n${rawBody.slice(0, 500)}`;
-
-    // Only send the real notification if we have meaningful content
-    if (rawBody || subject) {
-      if (chatId) await sendTelegram(chatId, notifText);
-    }
+    if (chatId) await sendTelegram(chatId, notifText);
   } catch (error) {
     console.error("GHL Webhook processing error:", error);
   }
