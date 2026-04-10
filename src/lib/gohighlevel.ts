@@ -178,11 +178,9 @@ export async function getUnrepliedConversations() {
 
     const conversations = data.conversations || [];
 
-    // Filter to ones with unread inbound messages
+    // Only show conversations GHL considers unread — if you replied, GHL marks it read
     return conversations
-      .filter((c: { unreadCount: number; lastMessageType: string; lastMessageDirection: string }) =>
-        c.unreadCount > 0 || c.lastMessageDirection === "inbound"
-      )
+      .filter((c: { unreadCount: number }) => c.unreadCount > 0)
       .slice(0, 20)
       .map((c: {
         id: string;
