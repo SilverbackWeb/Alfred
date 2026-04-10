@@ -40,6 +40,26 @@ export async function searchContacts(query: string) {
   }
 }
 
+export async function getContactById(contactId: string) {
+  const err = checkCredentials();
+  if (err) return null;
+  try {
+    const res = await fetch(`${GHL_BASE}/contacts/${contactId}`, { headers: ghlHeaders() });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const c = data.contact;
+    if (!c) return null;
+    return {
+      id: c.id,
+      name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.phone || c.email || "Unknown",
+      email: c.email,
+      phone: c.phone,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function createContact(data: {
   firstName: string;
   lastName?: string;
