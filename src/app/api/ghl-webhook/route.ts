@@ -13,49 +13,64 @@ async function sendTelegram(chatId: string, text: string) {
   });
 }
 
+async function getOwnerChatId(): Promise<string | null> {
+  const owner = await prisma.user.findFirst({
+    where: { telegramId: { not: null } },
+  });
+  return owner?.telegramId ?? null;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    // Only handle inbound messages
-    const type = body.type || body.event;
-    if (!type?.toLowerCase().includes("inbound")) {
+    // DEBUG: forward the raw payload so we can see what GHL actually sends
+    const chatId = await getOwnerChatId();
+    if (chatId) {
+      await sendTelegram(chatId, `[GHL DEBUG] Raw payload:\n${JSON.stringify(body, null, 2).slice(0, 3000)}`);
+    }
+
+    const type: string = body.type || body.event || body.eventType || "";
+
+    // Only process inbound messages
+    if (!type.toLowerCase().includes("inbound")) {
       return NextResponse.json({ ok: true });
     }
 
     const messageType: string = body.messageType || body.type || "Message";
-    const contactId: string | undefined = body.contactId;
-    const rawBody: string = body.body || body.message?.body || "";
-    const subject: string = body.subject || "";
+    const contactId: string | undefined = body.contactId || body.contact?.id;
+    const rawBody: string = body.body || body.message?.body || body.text || "";
+    const subject: string = body.subject || body.email?.subject || "";
 
     if (!rawBody && !subject) {
       return NextResponse.json({ ok: true });
     }
 
     // Look up contact name from GHL
-    let senderName = body.contactName || body.name || "Unknown";
-    if (contactId && senderName === "Unknown") {
+    let senderName: string =
+      body.contactName ||
+      body.contact?.name ||
+      `${body.contact?.firstName || ""} ${body.contact?.lastName || ""}`.trim() ||
+      body.name ||
+      "Unknown";
+
+    if (contactId && (senderName === "Unknown" || senderName === "")) {
       const contact = await getContactById(contactId);
       if (contact?.name) senderName = contact.name;
     }
 
-    // Build notification text
+    // Build notification
     const isEmail = messageType.toLowerCase().includes("email");
     const isSMS = messageType.toLowerCase().includes("sms");
     const typeLabel = isEmail ? "📧 Email" : isSMS ? "📱 Text" : "💬 Message";
 
-    let notifText = `${typeLabel} from ${senderName}`;
+    let notifText = `${typeLabel} from ${senderName || "Unknown"}`;
     if (isEmail && subject) notifText += `\nSubject: ${subject}`;
     if (rawBody) notifText += `\n\n${rawBody.slice(0, 500)}`;
     if (rawBody.length > 500) notifText += "\n[...]";
 
-    // Find the owner's Telegram chat ID (single-user app — first user in DB)
-    const owner = await prisma.user.findFirst({
-      where: { telegramId: { not: null } },
-    });
-
-    if (owner?.telegramId) {
-      await sendTelegram(owner.telegramId, notifText);
+    if (chatId) {
+      await sendTelegram(chatId, notifText);
     }
 
     return NextResponse.json({ ok: true });
