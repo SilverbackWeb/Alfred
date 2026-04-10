@@ -50,7 +50,7 @@ export async function POST(req: Request) {
     const customData = (body.customData as Record<string, unknown>) || {};
     const message = (body.message as Record<string, unknown>) || {};
     const senderName = (customData.contact_name || body.full_name || "Unknown") as string;
-    const rawBody = (customData.message_body || (message.body as string) || "").trim();
+    const rawBody = String(customData.message_body || message.body || "").trim();
     await sendTelegram(chatId, `[DEBUG2] chatId: ${chatId}\nsender: ${senderName}\nbody: "${rawBody}"`);
   } else {
     // No chatId found — log to console
