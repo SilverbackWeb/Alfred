@@ -36,25 +36,44 @@ export async function POST(req: Request) {
       body.email || "Unknown"
     );
 
+    const senderEmail = String(body.email || customData.email || "").trim();
+    const contactId = String(body.contact_id || body.contactId || "").trim();
     const rawBody = String(customData.message_body || message.body || "").trim();
     const subject = String(body.subject || customData.subject || "").trim();
 
-    // Nothing meaningful to notify about
+    // messageType can be passed as a custom field from GHL workflow
+    const messageType = String(customData.message_type || body.messageType || body.message_type || "").toLowerCase();
+    const isEmail = messageType.includes("email") || subject.length > 0;
+    const typeLabel = isEmail ? "Email" : "Text";
+
+    // Nothing to notify about
     if (!rawBody && !subject) {
       return NextResponse.json({ ok: true });
     }
 
-    const isEmail = subject.length > 0;
-    const typeLabel = isEmail ? "📧 Email" : "📱 Text";
-
+    // Build clean notification (no emojis per user preference)
     let notifText = `${typeLabel} from ${senderName}`;
     if (isEmail && subject) notifText += `\nSubject: ${subject}`;
     if (rawBody) notifText += `\n\n${rawBody.slice(0, 500)}`;
 
     const owner = await prisma.user.findFirst({ where: { telegramId: { not: null } } });
-    if (owner?.telegramId) {
-      await sendTelegram(owner.telegramId, notifText);
-    }
+    if (!owner) return NextResponse.json({ ok: true });
+
+    // Send Telegram notification
+    await sendTelegram(owner.telegramId!, notifText);
+
+    // Save to Alfred's conversation memory so he knows the full context when you reply
+    // This means "reply to Kelly" will use the right contact, email, and message
+    const memoryEntry = `[Incoming ${typeLabel}] From: ${senderName}${senderEmail ? ` <${senderEmail}>` : ""}${contactId ? ` (GHL contact_id: ${contactId})` : ""}${subject ? ` | Subject: ${subject}` : ""} | Message: "${rawBody}"`;
+
+    await prisma.message.create({
+      data: {
+        role: "assistant",
+        content: memoryEntry,
+        userId: owner.id,
+      },
+    });
+
   } catch (error) {
     console.error("GHL Webhook Error:", error);
   }
