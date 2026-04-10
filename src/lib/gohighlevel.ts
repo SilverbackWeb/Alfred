@@ -216,7 +216,8 @@ export async function sendGHLEmail(contactId: string, subject: string, body: str
         type: "Email",
         contactId,
         subject,
-        body,
+        html: body,
+        message: body,
         locationId: process.env.GHL_LOCATION_ID,
       }),
     });
