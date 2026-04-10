@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getContactById } from "@/lib/gohighlevel";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 
@@ -13,48 +12,51 @@ async function sendTelegram(chatId: string, text: string) {
   });
 }
 
-async function getOwnerChatId(): Promise<string | null> {
-  const owner = await prisma.user.findFirst({
-    where: { telegramId: { not: null } },
-  });
-  return owner?.telegramId ?? null;
-}
-
 export async function POST(req: Request) {
-  let body: Record<string, unknown> = {};
-
-  // GHL workflow webhooks can send JSON or form-encoded — handle both
   try {
     const contentType = req.headers.get("content-type") || "";
+    let body: Record<string, unknown> = {};
+
     if (contentType.includes("application/json")) {
       body = await req.json();
     } else {
       const text = await req.text();
-      try {
-        body = JSON.parse(text);
-      } catch {
-        // form-encoded fallback
+      try { body = JSON.parse(text); } catch {
         const params = new URLSearchParams(text);
         params.forEach((v, k) => { body[k] = v; });
       }
     }
-  } catch (e) {
-    console.error("GHL payload parse error:", e);
-    return NextResponse.json({ ok: true });
-  }
 
-  const chatId = await getOwnerChatId();
-
-  // DEBUG: confirm chatId and parsed values
-  if (chatId) {
     const customData = (body.customData as Record<string, unknown>) || {};
     const message = (body.message as Record<string, unknown>) || {};
-    const senderName = (customData.contact_name || body.full_name || "Unknown") as string;
+
+    const senderName = String(
+      customData.contact_name || body.full_name ||
+      `${body.first_name || ""} ${body.last_name || ""}`.trim() ||
+      body.email || "Unknown"
+    );
+
     const rawBody = String(customData.message_body || message.body || "").trim();
-    await sendTelegram(chatId, `[DEBUG2] chatId: ${chatId}\nsender: ${senderName}\nbody: "${rawBody}"`);
-  } else {
-    // No chatId found — log to console
-    console.error("GHL webhook: no owner chatId found in DB");
+    const subject = String(body.subject || customData.subject || "").trim();
+
+    // Nothing meaningful to notify about
+    if (!rawBody && !subject) {
+      return NextResponse.json({ ok: true });
+    }
+
+    const isEmail = subject.length > 0;
+    const typeLabel = isEmail ? "📧 Email" : "📱 Text";
+
+    let notifText = `${typeLabel} from ${senderName}`;
+    if (isEmail && subject) notifText += `\nSubject: ${subject}`;
+    if (rawBody) notifText += `\n\n${rawBody.slice(0, 500)}`;
+
+    const owner = await prisma.user.findFirst({ where: { telegramId: { not: null } } });
+    if (owner?.telegramId) {
+      await sendTelegram(owner.telegramId, notifText);
+    }
+  } catch (error) {
+    console.error("GHL Webhook Error:", error);
   }
 
   return NextResponse.json({ ok: true });
