@@ -45,35 +45,16 @@ export async function POST(req: Request) {
 
   const chatId = await getOwnerChatId();
 
-  try {
+  // DEBUG: confirm chatId and parsed values
+  if (chatId) {
     const customData = (body.customData as Record<string, unknown>) || {};
     const message = (body.message as Record<string, unknown>) || {};
-
-    // GHL workflow payload uses these exact fields
-    const senderName = (
-      customData.contact_name ||
-      body.full_name ||
-      `${body.first_name || ""} ${body.last_name || ""}`.trim() ||
-      body.email ||
-      "Unknown"
-    ) as string;
-
-    const rawBody = (
-      customData.message_body ||
-      message.body ||
-      ""
-    ) as string;
-
-    const trimmed = rawBody.trim();
-    if (!trimmed) {
-      return NextResponse.json({ ok: true });
-    }
-
-    const notifText = `📱 New message from ${senderName}\n\n${trimmed.slice(0, 500)}`;
-
-    if (chatId) await sendTelegram(chatId, notifText);
-  } catch (error) {
-    console.error("GHL Webhook processing error:", error);
+    const senderName = (customData.contact_name || body.full_name || "Unknown") as string;
+    const rawBody = (customData.message_body || (message.body as string) || "").trim();
+    await sendTelegram(chatId, `[DEBUG2] chatId: ${chatId}\nsender: ${senderName}\nbody: "${rawBody}"`);
+  } else {
+    // No chatId found — log to console
+    console.error("GHL webhook: no owner chatId found in DB");
   }
 
   return NextResponse.json({ ok: true });
