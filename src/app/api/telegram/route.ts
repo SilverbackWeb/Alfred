@@ -243,9 +243,9 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
 - **TIME AWARENESS**: If the user mentions a time or date, set the dueDate.
 - **SEARCH BEFORE CREATING**: If the user asks about something, search the Vault first.
 - **DELEGATION**: When asked what you can take off their plate, use reviewTasksForDelegation then executeAgentTask.
-- **ALL EMAILS go through draftEmail only** — always call draftEmail and stop. Never send directly. The user will tap a button to send.
-- **AFTER draftEmail**: just say "Draft ready — tap Send to send or tell me what to change." Nothing else. The draft preview is already shown by the button message.
-- **NEVER call any send function** — sending is handled by the Send button, not by you.`;
+- **EMAILS**: When asked to draft, write, send, or reply to any email — call the draftEmail tool. That is all. Do not write the email content in your text reply. Do not show the draft yourself. The tool handles the display and the Send button.
+- **AFTER calling draftEmail**: your text reply must be only "Draft ready — tap Send or tell me what to change." Nothing else.
+- **NEVER write email content in your text response** — not the To, not the Subject, not the body. Only the tool does that.`;
 
     const { text: replyText } = await generateText({
       model: openai("gpt-4o-mini", { structuredOutputs: false }),
@@ -520,7 +520,7 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
 
         // ── GOOGLE TOOLS ──────────────────────────────────────────────────────
         draftEmail: tool({
-          description: "Write and preview an email — use this for ALL email requests whether user says 'draft', 'write', 'send', or 'email someone'. Always show the preview first. Never send without confirmation.",
+          description: "MUST be called for every email request — draft, write, send, reply, or email someone. This tool sends the draft preview with Send/Cancel buttons automatically. Do NOT write the email in your text response. Call this tool and let it handle the display.",
           parameters: z.object({
             to: z.string().describe("Recipient email address"),
             subject: z.string(),
