@@ -55,3 +55,4 @@ prisma/dev.db-journal
 INBOX/
 OUTBOX/
 
+.env*.local
