@@ -10,6 +10,10 @@ function getTextValue(...values: unknown[]) {
   return "";
 }
 
+function getTextValues(...values: unknown[]) {
+  return values.filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+}
+
 function decodeHtmlEntities(text: string) {
   const entities: Record<string, string> = {
     amp: "&",
@@ -74,11 +78,10 @@ function stripQuotedHistory(text: string) {
   const cutAt = lines.findIndex((line, index) => {
     const trimmed = line.trim();
     if (!trimmed) return false;
-    if (index === 0 && !trimmed.startsWith(">")) return false;
     return quotePatterns.some((pattern) => pattern.test(trimmed));
   });
 
-  return (cutAt > 0 ? lines.slice(0, cutAt).join("\n") : text).trim();
+  return (cutAt >= 0 ? lines.slice(0, cutAt).join("\n") : text).trim();
 }
 
 function stripSignature(text: string) {
@@ -112,6 +115,42 @@ function stripSignature(text: string) {
 function cleanIncomingEmail(rawBody: string) {
   const text = /<\/?[a-z][\s\S]*>/i.test(rawBody) ? htmlToText(rawBody) : rawBody;
   return normalizeWhitespace(stripSignature(stripQuotedHistory(normalizeWhitespace(text))));
+}
+
+function isHeaderOnly(text: string) {
+  const cleaned = normalizeWhitespace(text);
+  const lines = cleaned.split("\n").filter(Boolean);
+  if (!lines.length) return true;
+  if (lines.length > 3) return false;
+
+  return lines.every((line) =>
+    /^(from|to|cc|bcc|sent|date|subject|message):\s*/i.test(line) ||
+    /^["']?[^<>"']+["']?\s*<[^@\s]+@[^>\s]+>[:,]?$/i.test(line) ||
+    /^["']?[^@\s]+@[^@\s]+\.[^@\s"']+["']?[:,]?$/i.test(line)
+  );
+}
+
+function emailAddressCount(text: string) {
+  return text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.length || 0;
+}
+
+function chooseEmailBody(candidates: string[]) {
+  let best = { raw: "", cleaned: "", score: Number.NEGATIVE_INFINITY };
+
+  for (const raw of candidates) {
+    const cleaned = cleanIncomingEmail(raw);
+    if (!cleaned) continue;
+
+    let score = Math.min(cleaned.length, 1200);
+    if (isHeaderOnly(cleaned)) score -= 2000;
+    score -= emailAddressCount(cleaned) * 125;
+    if (/^begin forwarded message:/i.test(normalizeWhitespace(raw))) score -= 1000;
+    if (/<\/?[a-z][\s\S]*>/i.test(raw)) score += 150;
+
+    if (score > best.score) best = { raw, cleaned, score };
+  }
+
+  return best.cleaned ? best : { raw: getTextValue(...candidates), cleaned: "", score: 0 };
 }
 
 function formatPreview(text: string, maxLength = 700) {
@@ -158,7 +197,7 @@ export async function POST(req: Request) {
 
     const senderEmail = String(body.email || customData.email || "").trim();
     const contactId = String(body.contact_id || body.contactId || "").trim();
-    const rawBody = getTextValue(
+    const bodyCandidates = getTextValues(
       customData.message_body,
       customData.html,
       customData.body,
@@ -177,7 +216,9 @@ export async function POST(req: Request) {
     const owner = await prisma.user.findFirst({ where: { telegramId: { not: null } } });
     if (!owner) return NextResponse.json({ ok: true });
 
-    const displayBody = isEmail ? cleanIncomingEmail(rawBody) : normalizeWhitespace(rawBody);
+    const selectedEmailBody = isEmail ? chooseEmailBody(bodyCandidates) : null;
+    const rawBody = isEmail ? selectedEmailBody!.raw : getTextValue(...bodyCandidates);
+    const displayBody = isEmail ? selectedEmailBody!.cleaned : normalizeWhitespace(rawBody);
 
     if (!displayBody && !subject) {
       return NextResponse.json({ ok: true });
