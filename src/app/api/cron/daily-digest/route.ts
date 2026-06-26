@@ -50,7 +50,8 @@ export async function GET(req: Request) {
 
   // Unread Gmail
   try {
-    const emails = await searchEmails("is:unread is:inbox");
+    // Exclude automated notification senders that never need a reply
+    const emails = await searchEmails("is:unread is:inbox -from:whatconverts.com");
     if (Array.isArray(emails) && emails.length > 0) {
       hasAnything = true;
       lines.push(`\nUnread Gmail (${emails.length}):`);

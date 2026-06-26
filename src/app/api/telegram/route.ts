@@ -23,6 +23,15 @@ const ALFRED_PERSONA = (() => {
   }
 })();
 
+// Load client/contact context — grows over time as Alfred learns people
+const CLIENT_CONTEXT = (() => {
+  try {
+    return fs.readFileSync(path.join(process.cwd(), "CLIENT_CONTEXT.md"), "utf-8");
+  } catch {
+    return "";
+  }
+})();
+
 async function sendMessage(chatId: number, text: string) {
   if (!TELEGRAM_TOKEN) return;
   await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
@@ -184,6 +193,9 @@ export async function POST(req: Request) {
         } else {
           await sendMessage(cbChatId, "No draft found — ask me to draft an email first.");
         }
+      } else if (data === "edit_draft") {
+        await removeButtons(cbChatId, cbMessageId);
+        await sendMessage(cbChatId, "Tell me what to change.");
       } else if (data === "cancel_draft") {
         await prisma.user.updateMany({
           where: { telegramId: cbChatId.toString() },
@@ -242,7 +254,8 @@ export async function POST(req: Request) {
       ? `\n\n## User Preferences (learned — follow these strictly)\n${prefs.map((p) => `- ${p}`).join("\n")}`
       : "";
 
-    const systemPrompt = `${ALFRED_PERSONA}${prefsBlock}
+    const clientBlock = CLIENT_CONTEXT ? `\n\n${CLIENT_CONTEXT}` : "";
+    const systemPrompt = `${ALFRED_PERSONA}${clientBlock}${prefsBlock}
 
 ---
 
@@ -766,6 +779,43 @@ You have access to: Digital Brain (tasks), Gmail, Google Calendar, Google Docs, 
           execute: async () => {
             const prefs: string[] = userRecord.preferences ? JSON.parse(userRecord.preferences) : [];
             return prefs.length > 0 ? { preferences: prefs } : { preferences: [], note: "Nothing saved yet." };
+          },
+        }),
+
+        saveClientContext: tool({
+          description: "Save or update what Alfred knows about a specific person (client, contact, vendor, etc.) in CLIENT_CONTEXT.md. Use when Mike shares context about someone — their importance, relationship, communication preferences, business details — and confirms it should be saved.",
+          parameters: z.object({
+            name: z.string().describe("Full name or first name of the person"),
+            type: z.enum(["client", "contact"]).describe("'client' for paying clients, 'contact' for everyone else"),
+            notes: z.string().describe("What Alfred should know about this person. Write as bullet points starting with '- '. Include: importance, relationship context, communication preferences, business details, anything else relevant."),
+          }),
+          execute: async ({ name, type, notes }) => {
+            const filePath = path.join(process.cwd(), "CLIENT_CONTEXT.md");
+            let content = fs.readFileSync(filePath, "utf-8");
+
+            const section = type === "client" ? "## Clients" : "## Key Contacts (Non-clients)";
+            const entry = `\n### ${name}\n${notes}\n`;
+            const placeholder = type === "client"
+              ? "_No entries yet. Added as Alfred learns them._"
+              : "_No entries yet._";
+
+            // Replace placeholder if still present
+            if (content.includes(placeholder)) {
+              content = content.replace(`${section}\n\n${placeholder}`, `${section}\n${entry}`);
+            } else if (content.includes(`### ${name}`)) {
+              // Update existing entry
+              const regex = new RegExp(`### ${name}\\n[\\s\\S]*?(?=\\n###|\\n---|\n## |$)`);
+              content = content.replace(regex, `### ${name}\n${notes}\n`);
+            } else {
+              // Append to correct section
+              const sectionIndex = content.indexOf(section);
+              const nextSectionIndex = content.indexOf("\n---", sectionIndex + 1);
+              const insertAt = nextSectionIndex !== -1 ? nextSectionIndex : content.length;
+              content = content.slice(0, insertAt) + entry + content.slice(insertAt);
+            }
+
+            fs.writeFileSync(filePath, content, "utf-8");
+            return { saved: true, name, type };
           },
         }),
       },
