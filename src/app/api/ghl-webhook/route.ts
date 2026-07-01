@@ -289,7 +289,7 @@ export async function POST(req: Request) {
           draftReply: z
             .string()
             .describe(
-              "A suggested reply body on behalf of Mike Satterfield. No greeting line, no subject line, no signature — just the body text. Concise, professional, human, matching the tone of the incoming message."
+              "A suggested reply body on behalf of Mike Satterfield. No greeting line, no subject line, no signature — just the body text. Keep it short and conversational. Always positive and constructive — never a flat 'no' or decline. If something can't be done, frame it as 'I'll look into that' or 'let me check on that' or 'we'll get that sorted'. Sound like a real person, not a customer service template."
             ),
         }),
         system: `${ALFRED_PERSONA}${contextBlock}

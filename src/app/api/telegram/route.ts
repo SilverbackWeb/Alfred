@@ -168,7 +168,7 @@ export async function POST(req: Request) {
 
       if (data === "send_draft") {
         const user = await prisma.user.findFirst({ where: { telegramId: cbChatId.toString() } });
-        if (user?.lastDraftSubject && user?.lastDraftBody) {
+        if (user?.lastDraftBody) {
           let result: { success?: boolean; error?: string; messageId?: string } = {};
 
           if (user.lastDraftChannel === "ghl_email" && user.lastDraftContactId) {
@@ -195,7 +195,11 @@ export async function POST(req: Request) {
         }
       } else if (data === "edit_draft") {
         await removeButtons(cbChatId, cbMessageId);
-        await sendMessage(cbChatId, "Tell me what to change.");
+        await prisma.user.updateMany({
+          where: { telegramId: cbChatId.toString() },
+          data: { awaitingDraftEdit: true },
+        });
+        await sendMessage(cbChatId, "What should I change?");
       } else if (data === "cancel_draft") {
         await prisma.user.updateMany({
           where: { telegramId: cbChatId.toString() },
@@ -247,6 +251,40 @@ export async function POST(req: Request) {
     await prisma.message.create({
       data: { role: "user", content: userText, userId: userRecord.id },
     });
+
+    // If user tapped Edit on a draft, next message is the revision instruction — handle it directly.
+    if (userRecord.awaitingDraftEdit && userRecord.lastDraftBody) {
+      await prisma.user.update({
+        where: { id: userRecord.id },
+        data: { awaitingDraftEdit: false },
+      });
+      const { text: revised } = await generateText({
+        model: openai("gpt-4o-mini"),
+        system: `${ALFRED_PERSONA}\n\nRevise the draft reply below based on the user's instruction. Return ONLY the revised reply body — no greeting, no subject, no signature.`,
+        prompt: `Original draft:\n${userRecord.lastDraftBody}\n\nRevision instruction: ${userText}`,
+      });
+      const revisedBody = revised.trim();
+      await prisma.user.update({
+        where: { id: userRecord.id },
+        data: { lastDraftBody: revisedBody },
+      });
+      await prisma.message.create({
+        data: { role: "assistant", content: `[Revised Draft]\n${revisedBody}`, userId: userRecord.id },
+      });
+      const channel = userRecord.lastDraftChannel || "";
+      const isGHL = channel.startsWith("ghl");
+      const toLabel = isGHL ? `${userRecord.lastDraftTo} via GHL` : userRecord.lastDraftTo;
+      await sendMessageWithButtons(
+        chatId,
+        `To: ${toLabel}\n\n${revisedBody}`,
+        [[
+          { text: "Send", callback_data: "send_draft" },
+          { text: "Edit", callback_data: "edit_draft" },
+          { text: "Cancel", callback_data: "cancel_draft" },
+        ]]
+      );
+      return NextResponse.json({ ok: true });
+    }
 
     // Build system prompt: base persona + learned preferences
     const prefs: string[] = userRecord.preferences ? JSON.parse(userRecord.preferences) : [];

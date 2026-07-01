@@ -18,6 +18,7 @@ model User {
   lastDraftChannel    String?  // "gmail" | "ghl_email" | "ghl_sms"
   lastPipeline        String?  // JSON array of last pipeline results shown
   preferences         String?  // JSON array of learned user preferences
+  awaitingDraftEdit   Boolean  @default(false)  // true after Edit button tapped, cleared after revision sent
   tasks       Task[]
   ideas       Idea[]
   messages    Message[]
